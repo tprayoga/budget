@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
+import { BukuKasPage } from './pages/BukuKasPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { FundRequestDetailPage } from './pages/FundRequestDetailPage';
@@ -12,6 +13,8 @@ import { InboxPage } from './pages/InboxPage';
 import { LoginPage } from './pages/LoginPage';
 import { MasterPage } from './pages/MasterPage';
 import { ProjectPage } from './pages/ProjectPage';
+import { QuickExpensePage } from './pages/QuickExpensePage';
+import { RealisasiPage } from './pages/RealisasiPage';
 import { RekapPage } from './pages/RekapPage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -45,6 +48,9 @@ export function App() {
         <Route path="/pengajuan/:id/edit" element={<FundRequestWizard />} />
         <Route path="/pengajuan/:id" element={<FundRequestDetailPage />} />
         <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/realisasi" element={<RealisasiPage />} />
+        <Route path="/realisasi/cepat" element={<QuickExpensePage />} />
+        <Route path="/buku-kas" element={<BukuKasPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/master" element={<MasterPage />} />
         <Route path="/pengaturan" element={<SettingsPage />} />

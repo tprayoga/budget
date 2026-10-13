@@ -174,6 +174,30 @@ describe('Import RAB (dry-run → keputusan manual → commit)', () => {
     expect((await realization(rw04)).row('OPS_KANTOR').realisasi).toBe('3578533.34');
   });
 
+  it('blok site CCSI Manado & daftar tanpa kategori: keputusan grup + kategori per item (INHERIT)', async () => {
+    const kalawiran = await clusterId(ctx.prisma, 'CCSI', 'Kalawiran Kakas Barat (Manado)');
+    const karondoran = await clusterId(ctx.prisma, 'CCSI', 'Karondoran Langowan Timur (Manado)');
+    const dry = await rabUpload('dry-run').expect(200);
+    const items = dry.body.items as { sheet: string; cell: string; key: string; mappingKey: string; status: string }[];
+    const jasa = items.find((i) => i.sheet === 'CCSI' && i.cell === 'D35')!;
+    const tiket = items.find((i) => i.sheet === 'CCSI' && i.cell === 'C54')!;
+    const manado = { scope: 'PROJECT', clusterIds: [kalawiran, karondoran], method: 'EQUAL' };
+    await rabUpload('commit', {
+      [jasa.mappingKey]: manado,
+      [tiket.mappingKey]: manado,
+      [`RAB:${tiket.key}`]: { scope: 'INHERIT', category: 'TICKET' },
+    }).expect(200);
+    const after = await rabUpload('dry-run').expect(200);
+    const at = (cell: string) => after.body.items.find((i: { sheet: string; cell: string }) => i.sheet === 'CCSI' && i.cell === cell);
+    expect(at('C54')).toMatchObject({ status: 'UNCHANGED', category: 'TICKET', target: { scope: 'PROJECT' } });
+    expect(at('C55').status).toBe('NEEDS_MAPPING'); // kategori belum dipilih
+    // Total Jasa Manado 36.920.416 terbagi rata ke 2 cluster Manado
+    const a = (await realization(kalawiran)).body.byCategory.find((x: { category: string }) => x.category === 'SUBCON_JASA').realisasi;
+    const b = (await realization(karondoran)).body.byCategory.find((x: { category: string }) => x.category === 'SUBCON_JASA').realisasi;
+    expect(Number(a) + Number(b)).toBe(36920416);
+    expect(a).toBe('18460208.00');
+  });
+
   it('PM tidak boleh import realisasi', async () => {
     const { srv, auth } = ctx.api('pm').raw();
     await srv.post('/api/import/rab-xlsx').set(auth).attach('file', readFileSync(RAB), 'RAB.xlsx').expect(403);

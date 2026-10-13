@@ -334,6 +334,10 @@ function StepAttachments({ fr, onBack, onNext }: { fr: FrDetail; onBack: () => v
     mutationFn: (attId: string) => api(`/fund-requests/${fr.id}/attachments/${attId}`, { method: 'DELETE' }),
     onSuccess: refresh,
   });
+  const report = useMutation({
+    mutationFn: () => api<{ fileName: string; previous: { number: string } }>(`/fund-requests/${fr.id}/attachments/previous-report`, { method: 'POST' }),
+    onSuccess: refresh,
+  });
 
   const toggle = (kind: AttachmentKind, checked: boolean) => {
     setOptimistic((o) => ({ ...o, [kind]: checked }));
@@ -382,7 +386,16 @@ function StepAttachments({ fr, onBack, onNext }: { fr: FrDetail; onBack: () => v
           );
         })}
       </div>
-      <ErrorBox error={add.error ? errorMessage(add.error) : upd.error ? errorMessage(upd.error) : del.error ? errorMessage(del.error) : null} />
+      {fr.terminKe > 1 && (
+        <div className="card flex flex-col gap-2 p-3 text-sm sm:flex-row sm:items-center">
+          <span className="flex-1">Termin ke-{fr.terminKe}: buat otomatis PDF <b>laporan realisasi termin sebelumnya</b> (dana cair vs realisasi) sebagai lampiran.</span>
+          <button className="btn-secondary" disabled={report.isPending} onClick={() => report.mutate()}>
+            {report.isPending ? 'Membuat…' : 'Generate laporan realisasi'}
+          </button>
+        </div>
+      )}
+      {report.isSuccess && <p className="text-xs text-emerald-700">Lampiran dibuat dari {report.data.previous.number}: {report.data.fileName}</p>}
+      <ErrorBox error={report.error ? errorMessage(report.error) : add.error ? errorMessage(add.error) : upd.error ? errorMessage(upd.error) : del.error ? errorMessage(del.error) : null} />
       <p className="text-xs text-slate-500">Centang lampiran yang disertakan. File bersifat opsional (bisa diserahkan terpisah), maks. 10 MB per file.</p>
       <div className="flex justify-between">
         <button className="btn-secondary" onClick={onBack}><ArrowLeft className="h-4 w-4" /> Kembali</button>

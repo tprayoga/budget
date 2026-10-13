@@ -2,7 +2,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, FileSpreadsheet, Upload } from 'lucide-react';
 import { Fragment, useMemo, useState } from 'react';
 import { api, errorMessage } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Money, PageHeader, cx } from '../components/ui';
+import { ImportLedgerTab, ImportRabTab } from './ImportRabTab';
 import { formatPersen } from '../lib/format';
 
 type Status = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'MISSING_IN_FILE';
@@ -23,7 +25,7 @@ const STATUS_STYLE: Record<Status, string> = {
 };
 const STATUS_LABEL: Record<Status, string> = { NEW: 'Baru', CHANGED: 'Berubah', UNCHANGED: 'Sama', MISSING_IN_FILE: 'Tidak ada di file' };
 
-export function ImportPage() {
+export function BudgetImportTab() {
   const qc = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -65,8 +67,8 @@ export function ImportPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <PageHeader title="Import Budget dari Excel" subtitle="Layout seperti file Budget_Per_Cluster (sheet per project: ADW, EVANTAMA, CCSI). Dry-run dulu, lalu commit." />
+    <div>
+      <p className="mb-3 text-sm text-slate-500">Layout seperti file Budget_Per_Cluster (sheet per project: ADW, EVANTAMA, CCSI). Dry-run dulu, lalu commit.</p>
       <div className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
         <label className="flex flex-1 cursor-pointer items-center gap-3 rounded-lg border border-dashed border-slate-300 px-4 py-3 hover:bg-slate-50">
           <FileSpreadsheet className="h-6 w-6 text-emerald-600" />
@@ -162,6 +164,34 @@ export function ImportPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Halaman Import: tab Budget | RAB Realisasi | Buku Kas. */
+export function ImportPage() {
+  const { can } = useAuth();
+  const [tab, setTab] = useState<'budget' | 'rab' | 'kas'>('budget');
+  const tabs: [typeof tab, string, boolean][] = [
+    ['budget', 'Budget per Cluster', can('ADMIN', 'PM')],
+    ['rab', 'RAB Realisasi', can('ADMIN', 'FINANCE')],
+    ['kas', 'Buku Kas', can('ADMIN', 'FINANCE')],
+  ];
+  const visible = tabs.filter((t) => t[2]);
+  const active = visible.some((t) => t[0] === tab) ? tab : visible[0]?.[0];
+  return (
+    <div className="mx-auto max-w-6xl">
+      <PageHeader title="Import Excel" />
+      <div className="mb-4 flex gap-1 border-b" role="tablist" aria-label="Jenis import">
+        {visible.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={active === k} onClick={() => setTab(k)} className={cx('-mb-px border-b-2 px-4 py-2 text-sm font-medium', active === k ? 'border-brand text-brand' : 'border-transparent text-slate-500')}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {active === 'budget' && <BudgetImportTab />}
+      {active === 'rab' && <ImportRabTab />}
+      {active === 'kas' && <ImportLedgerTab />}
     </div>
   );
 }

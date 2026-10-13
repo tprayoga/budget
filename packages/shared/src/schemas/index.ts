@@ -282,9 +282,12 @@ export const webhookExpenseSchema = z.object({
 });
 export type WebhookExpenseInput = z.infer<typeof webhookExpenseSchema>;
 
-/** Keputusan pemetaan import RAB, per kunci grup/blok atau per item. */
+/**
+ * Keputusan pemetaan import RAB, per kunci grup/blok atau per item.
+ * INHERIT = hanya menetapkan kategori; tujuan cluster mengikuti keputusan grup.
+ */
 export const rabDecisionSchema = z.object({
-  scope: z.enum(['CLUSTER', 'PROJECT', 'SKIP']),
+  scope: z.enum(['CLUSTER', 'PROJECT', 'SKIP', 'INHERIT']),
   clusterId: z.string().nullish(),
   clusterIds: z.array(z.string()).optional(),
   method: z.enum(ALLOCATION_METHODS).nullish(),

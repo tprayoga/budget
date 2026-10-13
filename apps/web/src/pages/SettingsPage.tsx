@@ -7,8 +7,9 @@ import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Field, PageHeader, Spinner, Toggle } from '../components/ui';
 import { pctInputToRatio, ratioToPctInput } from '../lib/format';
+import { ApiKeySection, CategoryMappingSection, HolidaySection, TerminTemplateSection, WarnPctSection } from '../components/SettingsRealization';
 
-interface GlobalSetting { interestRate: string; retensiAsCost: boolean; rekeningBank: string | null; rekeningNo: string | null; rekeningNama: string | null }
+interface GlobalSetting { interestRate: string; retensiAsCost: boolean; rekeningBank: string | null; rekeningNo: string | null; rekeningNama: string | null; realisasiWarnPct: string | null }
 interface Template { effective: { pajakRate: string; retensiRate: string; lines: { code: BudgetLineCode; mode: 'PCT' | 'RP'; pct: string | null; amount: string | null }[] } }
 
 export function SettingsPage() {
@@ -81,6 +82,13 @@ export function SettingsPage() {
         <ErrorBox error={saveTpl.error ? errorMessage(saveTpl.error) : null} />
         {admin && <button className="btn-primary" disabled={saveTpl.isPending} onClick={() => saveTpl.mutate()}><Save className="h-4 w-4" /> Simpan template</button>}
       </section>
+
+      <h2 className="pt-2 text-lg font-bold">Realisasi & termin klien</h2>
+      <section className="card p-4"><WarnPctSection value={s.data?.realisasiWarnPct} /></section>
+      <CategoryMappingSection />
+      <TerminTemplateSection />
+      <HolidaySection />
+      {admin && <ApiKeySection />}
     </div>
   );
 }

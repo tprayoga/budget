@@ -2,13 +2,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, RotateCcw, Save, Search } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CLUSTER_STATUSES, CLUSTER_STATUS_LABEL, DIVISIONS, type ClusterStatus } from '@indotek/shared';
+import { CLUSTER_STATUSES, CLUSTER_STATUS_LABEL, DIVISIONS, sum, type ClusterStatus } from '@indotek/shared';
 import { api, download, errorMessage } from '../api/client';
-import type { Rekap } from '../api/types';
+import type { RealisasiSummary, Rekap } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ClusterStatusBadge, ErrorBox, Money, PageHeader, Pct, Spinner, Stat, Toggle, cx } from '../components/ui';
 import { recalcProjects, type Assumption } from '../lib/budget';
 import { formatRupiah, pctInputToRatio, ratioToPctInput } from '../lib/format';
+
+/** Σ field ringkasan realisasi per cluster (Decimal). */
+function sumField(clusters: { realisasi?: RealisasiSummary }[], k: keyof RealisasiSummary): string {
+  return sum(clusters.map((c) => c.realisasi?.[k] ?? '0')).toFixed(2);
+}
 
 export function RekapPage() {
   const { can } = useAuth();
@@ -156,6 +161,8 @@ export function RekapPage() {
               <th className="th num hidden sm:table-cell">Outflow</th>
               <th className="th num">Profit</th>
               <th className="th num">Margin</th>
+              <th className="th num hidden xl:table-cell" title="Realisasi biaya terverifikasi">Realisasi</th>
+              <th className="th num hidden xl:table-cell" title="Pembayaran klien (bruto) − realisasi biaya">Profit realisasi</th>
             </tr>
           </thead>
           <tbody>
@@ -178,6 +185,8 @@ export function RekapPage() {
                   <td className="td num hidden sm:table-cell"><Money value={p.total.outflow} plain /></td>
                   <td className="td num"><Money value={p.total.profit} plain /></td>
                   <td className="td num"><Pct value={p.total.margin} /></td>
+                  <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'realisasiBiaya')} plain /></td>
+                  <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'profitRealisasi')} plain /></td>
                 </tr>
                 {p.rows.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -194,10 +203,12 @@ export function RekapPage() {
                     <td className="td num hidden sm:table-cell"><Money value={c.calc.outflow} plain /></td>
                     <td className="td num"><Money value={c.calc.profit} plain /></td>
                     <td className="td num"><Pct value={c.calc.margin} /></td>
+                    <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.realisasiBiaya ?? null} plain /></td>
+                    <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.profitRealisasi ?? null} plain /></td>
                   </tr>
                 ))}
                 {isFiltered && !p.rows.length && (
-                  <tr><td colSpan={8} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
+                  <tr><td colSpan={10} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
                 )}
               </Fragment>
             ))}

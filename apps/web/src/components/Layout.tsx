@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { FileText, Inbox, LayoutGrid, LogOut, Menu, Settings, Upload, Database, X } from 'lucide-react';
+import { BookOpen, FileText, Inbox, LayoutGrid, LogOut, Menu, Receipt, Settings, Upload, Database, X } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { ROLE_LABEL } from '@indotek/shared';
@@ -12,18 +12,24 @@ export function useInbox() {
   return useQuery({ queryKey: ['inbox'], queryFn: () => api<InboxT>('/fund-requests/inbox'), refetchInterval: 60_000 });
 }
 
-function Badge({ n }: { n?: number }) {
+function Badge({ n, testId }: { n?: number; testId?: string }) {
   if (!n) return null;
   return (
-    <span data-testid="inbox-badge" className="ml-auto min-w-5 rounded-full bg-red-600 px-1.5 text-center text-[11px] font-bold leading-5 text-white">
+    <span data-testid={testId} className="ml-auto min-w-5 rounded-full bg-red-600 px-1.5 text-center text-[11px] font-bold leading-5 text-white">
       {n}
     </span>
   );
 }
 
+/** Jumlah realisasi menunggu verifikasi (badge untuk FINANCE). */
+function usePendingExpenses(enabled: boolean) {
+  return useQuery({ queryKey: ['expense-pending'], queryFn: () => api<{ count: number }>('/expenses/pending-count'), enabled, refetchInterval: 60_000 });
+}
+
 export function Layout() {
   const { user, logout, can } = useAuth();
   const inbox = useInbox();
+  const pending = usePendingExpenses(can('FINANCE'));
   const [open, setOpen] = useState(false);
   const count = inbox.data?.count;
 
@@ -31,7 +37,9 @@ export function Layout() {
     { to: '/rekap', label: 'Rekap', icon: LayoutGrid, show: true },
     { to: '/pengajuan', label: 'Pengajuan Dana', icon: FileText, show: true },
     { to: '/inbox', label: 'Inbox Approval', icon: Inbox, show: true, badge: count },
-    { to: '/import', label: 'Import Excel', icon: Upload, show: can('ADMIN', 'PM') },
+    { to: '/realisasi', label: 'Realisasi', icon: Receipt, show: true, badge: can('FINANCE') ? pending.data?.count : undefined },
+    { to: '/buku-kas', label: 'Buku Kas', icon: BookOpen, show: can('ADMIN', 'FINANCE', 'DIREKTUR', 'PM') },
+    { to: '/import', label: 'Import Excel', icon: Upload, show: can('ADMIN', 'PM', 'FINANCE') },
     { to: '/master', label: 'Data Master', icon: Database, show: can('ADMIN', 'PM') },
     { to: '/pengaturan', label: 'Pengaturan', icon: Settings, show: true },
   ].filter((n) => n.show);
@@ -54,7 +62,7 @@ export function Layout() {
       <nav className="flex-1 space-y-1">
         {nav.map((n) => (
           <NavLink key={n.to} to={n.to} className={link} onClick={() => setOpen(false)}>
-            <n.icon className="h-4 w-4" /> {n.label} <Badge n={n.badge} />
+            <n.icon className="h-4 w-4" /> {n.label} <Badge n={n.badge} testId={n.to === '/inbox' ? 'inbox-badge' : `badge-${n.to.slice(1)}`} />
           </NavLink>
         ))}
       </nav>

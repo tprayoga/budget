@@ -6,7 +6,7 @@ import {
   type CalcSummaryDto,
   type ClusterCalcResult,
 } from '@indotek/shared';
-import type { Cluster, EffectiveSetting, ProjectBudget } from '../api/types';
+import type { Cluster, ClusterWithCalc, EffectiveSetting, ProjectBudget } from '../api/types';
 
 export interface Assumption {
   interestRate: string;
@@ -37,7 +37,7 @@ export function calcClusterLocal(c: Cluster, a: Assumption): ClusterCalcResult {
 export interface RecalcProject {
   project: ProjectBudget['project'];
   assumption: Assumption;
-  clusters: (Cluster & { calc: CalcSummaryDto })[];
+  clusters: ClusterWithCalc[];
   total: CalcSummaryDto;
   results: ClusterCalcResult[];
 }

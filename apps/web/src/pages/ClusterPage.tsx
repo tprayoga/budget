@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, FilePlus2, Save, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import {
   BUDGET_LABEL,
@@ -20,6 +20,7 @@ import { ErrorBox, Field, Modal, Money, PageHeader, Pct, Spinner, StatusBadge, c
 import { calcClusterLocal } from '../lib/budget';
 import { formatAngka, formatTanggal, pctInputToRatio, ratioToPctInput, rpInputToValue } from '../lib/format';
 import { toUpdatePayload } from '../lib/grid';
+import { ClientPaymentsTab, ClusterRealizationTab } from '../components/realization';
 
 const rp = z.string().refine((v) => rpInputToValue(v) !== null, 'Angka tidak valid');
 const pct = z.string().refine((v) => pctInputToRatio(v) !== null, 'Persen tidak valid');
@@ -123,6 +124,8 @@ export function ClusterPage() {
   const form = useForm<FormValues>({ resolver: zodResolver(formSchema) });
   const [dupOpen, setDupOpen] = useState(false);
   const [dupName, setDupName] = useState('');
+  const [params, setParams] = useSearchParams();
+  const tab = (params.get('tab') ?? 'budget') as 'budget' | 'realisasi' | 'termin';
 
   useEffect(() => {
     if (q.data) form.reset(toForm(q.data));
@@ -217,7 +220,24 @@ export function ClusterPage() {
       />
       <ErrorBox error={del.error ? errorMessage(del.error) : null} />
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="mb-4 flex gap-1 border-b" role="tablist" aria-label="Tab cluster">
+        {([['budget', 'Budget'], ['realisasi', 'Realisasi'], ['termin', 'Termin Klien']] as const).map(([k, label]) => (
+          <button
+            key={k}
+            role="tab"
+            aria-selected={tab === k}
+            onClick={() => setParams(k === 'budget' ? {} : { tab: k }, { replace: true })}
+            className={cx('-mb-px border-b-2 px-4 py-2 text-sm font-medium', tab === k ? 'border-brand text-brand' : 'border-transparent text-slate-500 hover:text-slate-700')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'realisasi' && <ClusterRealizationTab clusterId={c.id} projectId={c.project.id} />}
+      {tab === 'termin' && <ClientPaymentsTab clusterId={c.id} />}
+
+      <div className={cx('grid gap-4 lg:grid-cols-3', tab !== 'budget' && 'hidden')}>
         <form
           className="card min-w-0 space-y-4 p-4 lg:col-span-2"
           onSubmit={form.handleSubmit((v) => save.mutate(v))}
@@ -319,7 +339,7 @@ export function ClusterPage() {
         </div>
       </div>
 
-      <section className="card mt-4 overflow-hidden">
+      <section className={cx('card mt-4 overflow-hidden', tab !== 'budget' && 'hidden')}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="font-semibold">Riwayat pengajuan dana</h2>
           <span className="text-xs text-slate-500">Termin berikutnya: ke-{c.nextTerminKe}</span>

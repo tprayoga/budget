@@ -110,7 +110,7 @@ export class RabImporter {
         const groupRule = rules.get(mk);
         let target: RabTarget | null = null;
         let targetSource: RabPreviewItem['targetSource'] = null;
-        if (itemRule && itemRule.scope) target = this.targetFrom(itemRule, clusters);
+        if (itemRule && itemRule.scope !== 'INHERIT') target = this.targetFrom(itemRule, clusters);
         if (!target && groupRule) target = this.targetFrom(groupRule, clusters);
         if (target) targetSource = 'RULE';
         if (!target && it.section === 'SUBCON' && it.blockTitle) {

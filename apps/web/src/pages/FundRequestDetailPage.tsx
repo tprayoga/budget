@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Banknote, CheckCircle2, Circle, FileDown, Pencil, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { APPROVAL_STEP_LABEL, FR_FLOW, ROLE_LABEL, currentStep, todayJakartaIso, type ApprovalStep } from '@indotek/shared';
+import { APPROVAL_STEP_LABEL, BUDGET_LABEL, EXPENSE_CATEGORY_LABEL, FR_FLOW, ROLE_LABEL, currentStep, todayJakartaIso, type ApprovalStep } from '@indotek/shared';
 import { api, download, errorMessage } from '../api/client';
-import type { FrDetail } from '../api/types';
+import type { FrDetail, FrUsage } from '../api/types';
 import { FrSheet } from '../components/FrSheet';
-import { ErrorBox, Field, Modal, PageHeader, Spinner, StatusBadge, cx } from '../components/ui';
+import { ErrorBox, Field, Modal, Money, PageHeader, Spinner, StatusBadge, cx } from '../components/ui';
+import { ExpenseStatusBadge } from '../components/realization';
 import { formatTanggal, formatTanggalJam } from '../lib/format';
 
 function Timeline({ fr }: { fr: FrDetail }) {
@@ -56,6 +57,66 @@ function Timeline({ fr }: { fr: FrDetail }) {
         </details>
       )}
     </div>
+  );
+}
+
+/** Dana cair vs realisasi vs sisa dana di tangan (pengajuan DICAIRKAN). */
+function UsagePanel({ id }: { id: string }) {
+  const q = useQuery({ queryKey: ['fr-usage', id], queryFn: () => api<FrUsage>(`/fund-requests/${id}/realization`) });
+  const [loading, setLoading] = useState(false);
+  if (!q.data) return null;
+  const u = q.data;
+  const rows = u.rows.filter((r) => Number(r.cair) !== 0 || Number(r.realisasi) !== 0);
+  return (
+    <section className="card overflow-x-auto" aria-label="Dana cair vs realisasi">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
+        <h2 className="font-semibold">Dana cair vs Realisasi vs Sisa dana di tangan</h2>
+        <button
+          className="btn-secondary px-2 py-1 text-xs"
+          disabled={loading}
+          onClick={async () => {
+            setLoading(true);
+            try {
+              await download(`/fund-requests/${id}/realization-report.pdf`, 'Laporan_Realisasi.pdf', true);
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          <FileDown className="h-3.5 w-3.5" /> Laporan realisasi (PDF)
+        </button>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50"><tr><th className="th">Pos</th><th className="th num">Dana cair</th><th className="th num">Realisasi</th><th className="th num">Sisa di tangan</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.code} className="border-t">
+              <td className="td">{BUDGET_LABEL[r.code]}</td>
+              <td className="td num"><Money value={r.cair} plain /></td>
+              <td className="td num"><Money value={r.realisasi} plain /></td>
+              <td className="td num font-semibold"><Money value={r.sisa} plain /></td>
+            </tr>
+          ))}
+          <tr className="border-t bg-accent font-bold"><td className="td">TOTAL</td><td className="td num"><Money value={u.total.cair} plain /></td><td className="td num"><Money value={u.total.realisasi} plain /></td><td className="td num"><Money value={u.total.sisa} plain /></td></tr>
+        </tbody>
+      </table>
+      <div className="border-t px-4 py-3 text-sm">
+        <div className="mb-1 font-semibold">Realisasi yang ditautkan ({u.expenses.length})</div>
+        {u.menungguVerifikasi > 0 && <p className="text-xs text-amber-700">{u.menungguVerifikasi} realisasi menunggu verifikasi Finance (belum dihitung).</p>}
+        <ul className="space-y-1">
+          {u.expenses.map((e) => (
+            <li key={e.id} className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-500">{e.date ?? '—'}</span>
+              <span>{EXPENSE_CATEGORY_LABEL[e.category]}</span>
+              <span className="flex-1 truncate">{e.description}</span>
+              <Money value={e.clusterAmount ?? e.amount} />
+              <ExpenseStatusBadge status={e.status} />
+            </li>
+          ))}
+          {!u.expenses.length && <li className="text-xs text-slate-500">Tautkan realisasi dari menu Realisasi (ubah realisasi → pilih pengajuan) atau saat input.</li>}
+        </ul>
+      </div>
+    </section>
   );
 }
 
@@ -154,7 +215,8 @@ export function FundRequestDetailPage() {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="min-w-0">
+        <div className="min-w-0 space-y-4">
+          {fr.status === 'DICAIRKAN' && <UsagePanel id={fr.id} />}
           <FrSheet fr={fr} />
         </div>
         <div className="order-first min-w-0 space-y-4 lg:order-none lg:sticky lg:top-6 lg:self-start">
