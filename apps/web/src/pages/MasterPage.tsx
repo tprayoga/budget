@@ -40,7 +40,7 @@ export function MasterPage() {
     <div className="space-y-6">
       <PageHeader title="Data Master" subtitle="Pemberi kerja, project, dan akses investor per project" />
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className="card p-4">
+        <section className="card min-w-0 p-4">
           <h2 className="mb-3 font-semibold">Pemberi kerja</h2>
           <ul className="mb-3 divide-y text-sm">{clients.data?.map((c) => <li key={c.id} className="py-1.5">{c.name}</li>)}</ul>
           <div className="flex gap-2">
@@ -49,7 +49,7 @@ export function MasterPage() {
           </div>
           <div className="mt-2"><ErrorBox error={addClient.error ? errorMessage(addClient.error) : null} /></div>
         </section>
-        <section className="card p-4">
+        <section className="card min-w-0 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-semibold">Project</h2>
             <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setPOpen(true)}><Plus className="h-3.5 w-3.5" /> Project</button>

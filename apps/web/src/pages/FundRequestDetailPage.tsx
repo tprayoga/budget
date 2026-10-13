@@ -153,9 +153,11 @@ export function FundRequestDetailPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <FrSheet fr={fr} />
-        <div className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0">
+          <FrSheet fr={fr} />
+        </div>
+        <div className="order-first min-w-0 space-y-4 lg:order-none lg:sticky lg:top-6 lg:self-start">
           {acts.length > 0 && (
             <div className="card space-y-2 p-4" aria-label="Aksi">
               <h2 className="font-semibold">Tindakan Anda</h2>

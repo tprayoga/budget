@@ -219,7 +219,7 @@ export function ClusterPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <form
-          className="card space-y-4 p-4 lg:col-span-2"
+          className="card min-w-0 space-y-4 p-4 lg:col-span-2"
           onSubmit={form.handleSubmit((v) => save.mutate(v))}
           aria-label="Form cluster"
         >
@@ -284,7 +284,7 @@ export function ClusterPage() {
           <ErrorBox error={save.error ? errorMessage(save.error) : null} />
         </form>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <section className="card p-4">
             <h2 className="mb-3 font-semibold">Ringkasan</h2>
             <Waterfall nilaiProyek={live.nilaiProyek} danaInvestor={live.danaInvestor} interest={live.interest} profit={live.profit} />

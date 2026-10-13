@@ -2,14 +2,16 @@
   "name": "indotek-budget",
   "private": true,
   "packageManager": "pnpm@11.25.0",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e": "pnpm --filter @indotek/shared build && pnpm --filter @indotek/api build && playwright test -c e2e/playwright.config.ts",
     "format": "prettier --write ."
   },
   "devDependencies": {

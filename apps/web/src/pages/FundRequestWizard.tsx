@@ -312,6 +312,9 @@ function StepAttachments({ fr, onBack, onNext }: { fr: FrDetail; onBack: () => v
   const qc = useQueryClient();
   const refresh = () => qc.invalidateQueries({ queryKey: ['fund-request', fr.id] });
   const [lainnya, setLainnya] = useState('');
+  // Status centang optimistik sampai data server selesai dimuat ulang
+  const [optimistic, setOptimistic] = useState<Partial<Record<AttachmentKind, boolean>>>({});
+  useEffect(() => setOptimistic({}), [fr.attachments]);
   const add = useMutation({
     mutationFn: ({ kind, file, label, checked }: { kind: AttachmentKind; file?: File; label?: string; checked?: boolean }) => {
       const fd = new FormData();
@@ -333,6 +336,7 @@ function StepAttachments({ fr, onBack, onNext }: { fr: FrDetail; onBack: () => v
   });
 
   const toggle = (kind: AttachmentKind, checked: boolean) => {
+    setOptimistic((o) => ({ ...o, [kind]: checked }));
     const rows = fr.attachments.filter((a) => a.kind === kind);
     if (!rows.length) add.mutate({ kind, checked });
     else rows.forEach((r) => upd.mutate({ attId: r.id, checked }));
@@ -343,7 +347,7 @@ function StepAttachments({ fr, onBack, onNext }: { fr: FrDetail; onBack: () => v
       <div className="card divide-y">
         {FORM_ATTACHMENT_KINDS.map((kind) => {
           const rows = fr.attachments.filter((a) => a.kind === kind);
-          const isChecked = rows.some((r) => r.checked || r.hasFile);
+          const isChecked = optimistic[kind] ?? rows.some((r) => r.checked || r.hasFile);
           return (
             <div key={kind} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
               <label className="flex flex-1 items-center gap-2 text-sm">
