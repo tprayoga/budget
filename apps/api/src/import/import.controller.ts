@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  Param,
   Post,
   Query,
   UploadedFile,
@@ -20,7 +21,10 @@ import { BudgetImporter } from './budget-importer';
 import { LedgerImporter } from './ledger-importer';
 import { RabImporter } from './rab-importer';
 import { ExpenseSupportService } from '../realization/expense-support.service';
-import { rabCommitSchema } from '@indotek/shared';
+import { heldDismissSchema, heldReleaseSchema, rabCommitSchema, type HeldReleaseInput } from '@indotek/shared';
+import { HeldItemsService } from './held-items.service';
+import { ApiZodBody, ZBody } from '../common/zod';
+import { z } from 'zod';
 import { AccessService } from '../access/access.service';
 
 @ApiTags('import')
@@ -37,6 +41,7 @@ export class ImportController {
     settings: SettingsService,
     support: ExpenseSupportService,
     private readonly access: AccessService,
+    private readonly held: HeldItemsService,
   ) {
     this.importer = new BudgetImporter(prisma, audit, settings);
     this.rab = new RabImporter(prisma, audit, support);
@@ -133,6 +138,28 @@ export class ImportController {
     if (mode === 'commit') return { mode, sheet: parsed.ledgerSheet, ...(await this.ledger.commit(parsed.ledger, user.id)) };
     const p = await this.ledger.preview(parsed.ledger);
     return { mode: 'dry-run', sheet: parsed.ledgerSheet, summary: p.summary, projectLabels: p.projectLabels, sample: p.items.slice(0, 50) };
+  }
+
+  /** Daftar "Ditahan — perlu konfirmasi" (status HELD; RELEASED/DISMISSED untuk riwayat). */
+  @Get('held')
+  heldList(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
+    return this.held.list(user, status || 'HELD');
+  }
+
+  @Post('held/:id/release')
+  @HttpCode(200)
+  @Roles('ADMIN', 'FINANCE')
+  @ApiZodBody(heldReleaseSchema)
+  release(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(heldReleaseSchema) body: HeldReleaseInput) {
+    return this.held.release(user, id, body);
+  }
+
+  @Post('held/:id/dismiss')
+  @HttpCode(200)
+  @Roles('ADMIN', 'FINANCE')
+  @ApiZodBody(heldDismissSchema)
+  dismiss(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(heldDismissSchema) body: z.infer<typeof heldDismissSchema>) {
+    return this.held.dismiss(user, id, body);
   }
 
   /** Buku kas: referensi saja (tidak dihitung sebagai realisasi). */

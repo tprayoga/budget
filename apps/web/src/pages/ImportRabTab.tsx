@@ -13,13 +13,13 @@ import {
 } from '@indotek/shared';
 import { api, errorMessage } from '../api/client';
 import { ErrorBox, Money, cx } from '../components/ui';
-import { formatTanggal } from '../lib/format';
+import { formatPersen, formatTanggal, pctInputToRatio, ratioToPctInput } from '../lib/format';
 
 type Target =
   | { scope: 'CLUSTER'; clusterId: string; clusterName: string }
   | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod }
-  | { scope: 'SKIP' };
-type Status = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED';
+  | { scope: 'SKIP' | 'HOLD' | 'DUPLICATE'; note: string | null };
+type Status = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED' | 'HELD' | 'DUPLICATE';
 interface Item {
   key: string;
   sheet: string;
@@ -40,6 +40,7 @@ interface Item {
   target: Target | null;
   targetSource: 'AUTO' | 'RULE' | null;
   suggestedTarget: Target | null;
+  note: string | null;
   status: Status;
   diffs: { field: string; oldValue: string | null; newValue: string | null }[];
 }
@@ -51,6 +52,7 @@ interface Preview {
 interface CommitResult {
   created: number;
   updated: number;
+  held: number;
   preview: Preview;
 }
 
@@ -60,43 +62,116 @@ const STATUS_STYLE: Record<Status, string> = {
   UNCHANGED: 'bg-slate-100 text-slate-500',
   NEEDS_MAPPING: 'bg-red-50 text-red-700',
   SKIPPED: 'bg-slate-100 text-slate-400',
+  HELD: 'bg-violet-50 text-violet-700',
+  DUPLICATE: 'bg-orange-50 text-orange-700',
 };
-const STATUS_LABEL: Record<Status, string> = { NEW: 'Baru', CHANGED: 'Berubah', UNCHANGED: 'Sama', NEEDS_MAPPING: 'Perlu dipetakan', SKIPPED: 'Dilewati' };
+const STATUS_LABEL: Record<Status, string> = {
+  NEW: 'Baru',
+  CHANGED: 'Berubah',
+  UNCHANGED: 'Sama',
+  NEEDS_MAPPING: 'Perlu dipetakan',
+  SKIPPED: 'Dilewati',
+  HELD: 'Ditahan',
+  DUPLICATE: 'Duplikat',
+};
 
-const targetText = (t: Target | null) =>
-  !t ? '—' : t.scope === 'SKIP' ? 'Dilewati' : t.scope === 'CLUSTER' ? t.clusterName : `Project (${ALLOCATION_METHOD_LABEL[t.method]}): ${t.clusterNames.length} cluster`;
+function targetText(t: Target | null): string {
+  if (!t) return '—';
+  switch (t.scope) {
+    case 'CLUSTER':
+      return t.clusterName;
+    case 'PROJECT':
+      return `Project (${ALLOCATION_METHOD_LABEL[t.method]}): ${t.clusterNames.length} cluster`;
+    case 'HOLD':
+      return 'Ditahan';
+    case 'DUPLICATE':
+      return 'Duplikat';
+    default:
+      return 'Dilewati';
+  }
+}
 
-/** Form keputusan target untuk satu grup/blok. */
-function TargetEditor({ value, onChange, clusters }: { value: RabDecision | undefined; onChange: (d: RabDecision) => void; clusters: { id: string; name: string }[] }) {
+/** Σ persentase MANUAL (dalam %) valid = 100. */
+export function manualPctValid(d: RabDecision): boolean {
+  if (d.method !== 'MANUAL') return true;
+  const total = sum((d.manualPcts ?? []).map((m) => m.pct));
+  return total.eq(1);
+}
+
+/** Form keputusan target untuk satu grup/blok (atau item ditahan). */
+export function TargetEditor({
+  value,
+  onChange,
+  clusters,
+  allowHold = true,
+}: {
+  value: RabDecision | undefined;
+  onChange: (d: RabDecision) => void;
+  clusters: { id: string; name: string }[];
+  allowHold?: boolean;
+}) {
   const d: RabDecision = value ?? { scope: 'PROJECT', clusterIds: [], method: 'EQUAL' };
+  const scope = d.scope === 'INHERIT' ? 'PROJECT' : d.scope;
+  const checked = d.clusterIds?.length ? d.clusterIds : [];
+  const pctOf = (id: string) => d.manualPcts?.find((m) => m.clusterId === id)?.pct;
+  const setPct = (id: string, v: string) => {
+    const ratio = pctInputToRatio(v);
+    const others = (d.manualPcts ?? []).filter((m) => m.clusterId !== id);
+    onChange({ ...d, manualPcts: ratio === null ? others : [...others, { clusterId: id, pct: ratio }] });
+  };
   return (
     <div className="space-y-2">
-      <select className="input" value={d.scope === 'INHERIT' ? 'PROJECT' : d.scope} onChange={(e) => onChange({ ...d, scope: e.target.value as RabDecision['scope'] })} aria-label="Tujuan">
+      <select className="input" value={scope} onChange={(e) => onChange({ ...d, scope: e.target.value as RabDecision['scope'] })} aria-label="Tujuan">
         <option value="CLUSTER">Satu cluster</option>
         <option value="PROJECT">Level project (dialokasikan)</option>
-        <option value="SKIP">Lewati (tidak diimpor)</option>
+        {allowHold && <option value="HOLD">Tahan — perlu konfirmasi</option>}
+        {allowHold && <option value="DUPLICATE">Duplikat (lewati)</option>}
+        {allowHold && <option value="SKIP">Lewati (tidak diimpor)</option>}
       </select>
-      {d.scope === 'CLUSTER' && (
+      {scope === 'CLUSTER' && (
         <select className="input" value={d.clusterId ?? ''} onChange={(e) => onChange({ ...d, clusterId: e.target.value })} aria-label="Cluster tujuan">
           <option value="">Pilih cluster…</option>
           {clusters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       )}
-      {d.scope === 'PROJECT' && (
+      {scope === 'PROJECT' && (
         <>
           <select className="input" value={d.method ?? 'EQUAL'} onChange={(e) => onChange({ ...d, method: e.target.value as AllocationMethod })} aria-label="Metode alokasi">
-            {ALLOCATION_METHODS.filter((m) => m !== 'MANUAL').map((m) => <option key={m} value={m}>{ALLOCATION_METHOD_LABEL[m]}</option>)}
+            {ALLOCATION_METHODS.map((m) => <option key={m} value={m}>{m === 'MANUAL' ? 'Manual (% per cluster)' : ALLOCATION_METHOD_LABEL[m]}</option>)}
           </select>
-          <div className="max-h-40 space-y-0.5 overflow-y-auto rounded border p-2 text-xs">
+          <div className="max-h-48 space-y-0.5 overflow-y-auto rounded border p-2 text-xs">
             {clusters.map((c) => (
               <label key={c.id} className="flex items-center gap-2">
-                <input type="checkbox" checked={(d.clusterIds ?? []).includes(c.id)} onChange={(e) => onChange({ ...d, clusterIds: e.target.checked ? [...(d.clusterIds ?? []), c.id] : (d.clusterIds ?? []).filter((x) => x !== c.id) })} />
-                {c.name}
+                <input
+                  type="checkbox"
+                  checked={checked.includes(c.id)}
+                  onChange={(e) => onChange({ ...d, clusterIds: e.target.checked ? [...checked, c.id] : checked.filter((x) => x !== c.id), manualPcts: e.target.checked ? d.manualPcts : d.manualPcts?.filter((m) => m.clusterId !== c.id) })}
+                />
+                <span className="flex-1 truncate">{c.name}</span>
+                {d.method === 'MANUAL' && checked.includes(c.id) && (
+                  <input
+                    className="input w-20 py-0.5 text-right text-xs"
+                    inputMode="decimal"
+                    defaultValue={pctOf(c.id) ? ratioToPctInput(pctOf(c.id)!) : ''}
+                    placeholder="%"
+                    onChange={(e) => setPct(c.id, e.target.value)}
+                    aria-label={`Persen ${c.name}`}
+                  />
+                )}
               </label>
             ))}
           </div>
-          <p className="text-[11px] text-slate-500">Tidak dicentang = semua cluster aktif project.</p>
+          {d.method === 'MANUAL' ? (
+            <p className={cx('text-[11px]', manualPctValid(d) ? 'text-emerald-700' : 'text-red-600')}>
+              Total {formatPersen(sum((d.manualPcts ?? []).map((m) => m.pct)).toString())} — harus 100%. Centang cluster lalu isi persennya.
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-500">Tidak dicentang = semua cluster aktif project.</p>
+          )}
         </>
+      )}
+      {(scope === 'HOLD' || scope === 'DUPLICATE' || scope === 'SKIP') && (
+        <input className="input" placeholder="Catatan / alasan" value={d.note ?? ''} onChange={(e) => onChange({ ...d, note: e.target.value })} aria-label="Catatan keputusan" />
       )}
     </div>
   );
@@ -121,7 +196,8 @@ export function ImportRabTab() {
   const commit = useMutation({
     mutationFn: () => send<CommitResult>('commit'),
     onSuccess: async (r) => {
-      setResult(`Import selesai: ${r.created} realisasi baru, ${r.updated} diperbarui.`);
+      setResult(`Import selesai: ${r.created} realisasi baru, ${r.updated} diperbarui, ${r.held} ditahan.`);
+      void qc.invalidateQueries({ queryKey: ['held-items'] });
       setPreview(r.preview);
       setDecisions({});
       await qc.invalidateQueries();
@@ -169,7 +245,7 @@ export function ImportRabTab() {
               <h2 className="font-semibold">Perlu dipetakan manual ({groups.length} grup)</h2>
               {groups.map(([key, items]) => {
                 const first = items[0];
-                const needTarget = items.some((i) => !i.target);
+                const needTarget = items.some((i) => !i.target || !['CLUSTER', 'PROJECT'].includes(i.target.scope));
                 const cl = projectClusters(first.projectId);
                 return (
                   <div key={key} className="card grid gap-3 p-4 md:grid-cols-[1fr_320px]" data-testid="rab-group">
@@ -223,7 +299,7 @@ export function ImportRabTab() {
           )}
 
           <div className="flex justify-end">
-            <button className="btn-primary" disabled={commit.isPending} onClick={() => commit.mutate()}>
+            <button className="btn-primary" disabled={commit.isPending || Object.values(decisions).some((d) => !manualPctValid(d))} onClick={() => commit.mutate()}>
               {commit.isPending ? 'Menyimpan…' : `Commit (${preview.summary.NEW + preview.summary.CHANGED} siap + ${Object.keys(decisions).length} keputusan)`}
             </button>
           </div>
@@ -237,6 +313,7 @@ export function ImportRabTab() {
                     <td className="td font-mono text-xs text-slate-500">{i.sheet}!{i.cell}</td>
                     <td className="td max-w-[360px] whitespace-normal">
                       {i.label}
+                      {i.note && <div className="text-[11px] font-medium text-violet-700">Catatan: {i.note}</div>}
                       <div className="text-[11px] text-slate-500">{i.blockTitle ?? i.groupTitle} · {i.date ? formatTanggal(i.date) : (i.periodText ?? 'tanpa tanggal')}</div>
                       {i.warnings.map((w) => <div key={w} className="text-[11px] text-amber-700">⚠ {w}</div>)}
                       {i.diffs.map((d) => <div key={d.field} className="text-[11px] text-slate-500">{d.field}: <s>{d.oldValue}</s> → {d.newValue}</div>)}
@@ -312,5 +389,107 @@ export function ImportLedgerTab() {
         </div>
       )}
     </div>
+  );
+}
+
+interface HeldItem {
+  id: string;
+  projectId: string;
+  projectCode: string | null;
+  sheet: string;
+  cell: string;
+  section: string;
+  blockTitle: string | null;
+  groupTitle: string | null;
+  label: string;
+  date: string | null;
+  periodLabel: string | null;
+  amount: string;
+  suggestedCategory: ExpenseCategory | null;
+  suggestedTarget: Target | null;
+  note: string | null;
+}
+
+/** Daftar "Ditahan — perlu konfirmasi": dilepas (pilih kategori & tujuan) atau ditandai lewati/duplikat tanpa import ulang. */
+export function HeldItemsPanel() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['held-items'], queryFn: () => api<HeldItem[]>('/import/held') });
+  const clusters = useQuery({ queryKey: ['clusters', 'all'], queryFn: () => api<{ id: string; name: string; projectId: string; status: string }[]>('/clusters') });
+  const [open, setOpen] = useState<string | null>(null);
+  const [decision, setDecision] = useState<RabDecision | undefined>();
+  const [category, setCategory] = useState<ExpenseCategory | ''>('');
+  const [note, setNote] = useState('');
+  const done = () => {
+    setOpen(null);
+    void qc.invalidateQueries();
+  };
+  const release = useMutation({
+    mutationFn: (id: string) =>
+      api(`/import/held/${id}/release`, {
+        method: 'POST',
+        json: { ...decision, scope: decision?.scope === 'CLUSTER' ? 'CLUSTER' : 'PROJECT', category, note: note || null },
+      }),
+    onSuccess: done,
+  });
+  const dismiss = useMutation({
+    mutationFn: ({ id, scope }: { id: string; scope: 'SKIP' | 'DUPLICATE' }) => api(`/import/held/${id}/dismiss`, { method: 'POST', json: { scope, note } }),
+    onSuccess: done,
+  });
+  const items = q.data ?? [];
+  if (!items.length) return null;
+  return (
+    <section className="card space-y-2 border-violet-200 p-4" aria-label="Ditahan — perlu konfirmasi">
+      <h2 className="font-semibold">Ditahan — perlu konfirmasi ({items.length})</h2>
+      <p className="text-xs text-slate-500">Item ini tidak diimpor. Lepas dengan memilih kategori & tujuan, atau tandai duplikat/lewati — tanpa perlu mengunggah ulang file.</p>
+      <ErrorBox error={release.error ? errorMessage(release.error) : dismiss.error ? errorMessage(dismiss.error) : null} />
+      {items.map((h) => {
+        const cl = (clusters.data ?? []).filter((c) => c.projectId === h.projectId && c.status !== 'CANCELLED');
+        const isOpen = open === h.id;
+        return (
+          <div key={h.id} className="rounded-lg border p-3 text-sm" data-testid="held-item">
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{h.label} <span className="font-mono text-xs text-slate-400">{h.sheet}!{h.cell}</span></div>
+                <div className="text-xs text-slate-500">{h.projectCode} · {h.blockTitle ?? h.groupTitle ?? h.section} · {h.date ? formatTanggal(h.date) : (h.periodLabel ?? 'tanpa tanggal')}</div>
+                {h.note && <div className="mt-1 text-xs text-violet-700">{h.note}</div>}
+              </div>
+              <Money value={h.amount} className="font-semibold" />
+              {!isOpen && (
+                <button
+                  className="btn-secondary px-2 py-1 text-xs"
+                  onClick={() => {
+                    setOpen(h.id);
+                    setCategory(h.suggestedCategory ?? '');
+                    setNote('');
+                    const st = h.suggestedTarget;
+                    setDecision(st && st.scope === 'PROJECT' ? { scope: 'PROJECT', clusterIds: st.clusterIds, method: st.method } : { scope: 'PROJECT', clusterIds: [], method: 'EQUAL' });
+                  }}
+                >
+                  Tindak lanjut
+                </button>
+              )}
+            </div>
+            {isOpen && (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="space-y-2">
+                  <select className="input" value={category} onChange={(e) => setCategory(e.target.value as ExpenseCategory | '')} aria-label="Kategori item ditahan">
+                    <option value="">Pilih kategori…</option>
+                    {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{EXPENSE_CATEGORY_LABEL[c]}</option>)}
+                  </select>
+                  <input className="input" placeholder="Catatan (opsional / alasan lewati)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Catatan item ditahan" />
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn-primary" disabled={!category || release.isPending || (decision ? !manualPctValid(decision) : false)} onClick={() => release.mutate(h.id)}>Lepas & impor</button>
+                    <button className="btn-secondary" disabled={note.trim().length < 3} onClick={() => dismiss.mutate({ id: h.id, scope: 'DUPLICATE' })}>Duplikat</button>
+                    <button className="btn-secondary" disabled={note.trim().length < 3} onClick={() => dismiss.mutate({ id: h.id, scope: 'SKIP' })}>Lewati</button>
+                    <button className="btn-ghost" onClick={() => setOpen(null)}>Batal</button>
+                  </div>
+                </div>
+                <TargetEditor value={decision} onChange={setDecision} clusters={cl} allowHold={false} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
   );
 }

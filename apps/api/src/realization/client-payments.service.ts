@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ClientPayment, ClientPaymentStatus, Prisma, TerminKind } from '@prisma/client';
-import { calcDueDate, generateTermins, paymentDeduction, type ClientPaymentUpdateInput } from '@indotek/shared';
+import { calcDueDate, generateTermins, paymentDeduction, sum, type ClientPaymentUpdateInput } from '@indotek/shared';
 import { PrismaService, type Tx } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessService } from '../access/access.service';
@@ -201,31 +201,81 @@ export class ClientPaymentsService {
     return { ok: true };
   }
 
-  /**
-   * Generate termin dari template (insert-only). `recalculate` = hitung ulang nilai termin UNBILLED
-   * (mis. setelah nilai PO berubah); termin yang sudah ditagih/dibayar tidak disentuh.
-   */
-  async generate(user: AuthUser, clusterId: string, recalculate = false) {
+  /** Generate termin dari template (insert-only). */
+  async generate(user: AuthUser, clusterId: string) {
     await this.access.assertCluster(user, clusterId);
-    return this.prisma.$transaction(async (tx) => {
-      const created = await generateClientPayments(tx, clusterId);
-      let updated = 0;
-      if (recalculate) {
-        const c = await tx.cluster.findUniqueOrThrow({ where: { id: clusterId }, include: { project: true } });
-        const templates = await tx.terminTemplate.findMany({ where: { clientId: c.project.clientId }, include: { lines: true } });
-        for (const t of templates) {
-          const base = t.kind === 'PERMIT' ? c.nilaiPoPermit : c.nilaiPoImpl;
-          const rows = generateTermins(t.lines.map((l) => ({ terminKe: l.terminKe, pct: l.pct.toString() })), base.toString());
-          for (const r of rows) {
-            const p = await tx.clientPayment.findUnique({ where: { clusterId_kind_termin: { clusterId, kind: t.kind, termin: r.terminKe } } });
-            if (!p || p.status !== 'UNBILLED' || p.amount.eq(money(r.amount))) continue;
-            await tx.clientPayment.update({ where: { id: p.id }, data: { amount: money(r.amount) } });
-            await this.audit.diff(tx, user.id, 'ClientPayment', p.id, { amount: s(p.amount) }, { amount: money(r.amount).toString() });
-            updated++;
+    return { created: await generateClientPayments(this.prisma, clusterId) };
+  }
+
+  /**
+   * Hitung ulang termin setelah nilai PO berubah. Termin INVOICED/PAID tidak berubah; termin UNBILLED dihitung
+   * ulang dari persentase template dan termin UNBILLED terakhir menerima selisih sehingga
+   * Σ termin = Σpct × nilai PO terkini. `apply=false` → hanya preview diff.
+   */
+  async recalculate(user: AuthUser, clusterId: string, apply: boolean) {
+    await this.access.assertCluster(user, clusterId);
+    const run = async (tx: Tx) => {
+      const c = await tx.cluster.findUniqueOrThrow({ where: { id: clusterId }, include: { project: true } });
+      const templates = await tx.terminTemplate.findMany({ where: { clientId: c.project.clientId }, include: { lines: true } });
+      const kinds = [];
+      for (const t of templates) {
+        const base = t.kind === 'PERMIT' ? c.nilaiPoPermit : c.nilaiPoImpl;
+        const ideal = generateTermins(t.lines.map((l) => ({ terminKe: l.terminKe, pct: l.pct.toString(), keterangan: l.keterangan })), base.toString());
+        const target = sum(ideal.map((i) => i.amount));
+        const existing = await tx.clientPayment.findMany({ where: { clusterId, kind: t.kind }, orderBy: { termin: 'asc' } });
+        const locked = existing.filter((p) => p.status !== 'UNBILLED');
+        const lockedSum = sum(locked.map((p) => p.amount.toString()));
+        // termin UNBILLED (yang ada + yang belum dibuat dari template)
+        const rows = ideal.map((i) => {
+          const p = existing.find((x) => x.termin === i.terminKe);
+          return { terminKe: i.terminKe, pct: i.pct, keterangan: i.keterangan, payment: p ?? null, idealAmount: i.amount };
+        });
+        const unbilled = rows.filter((r) => !r.payment || r.payment.status === 'UNBILLED');
+        const diffs: { id: string | null; termin: number; status: string; oldAmount: string | null; newAmount: string; changed: boolean }[] = [];
+        let error: string | null = null;
+        if (!unbilled.length) {
+          if (!lockedSum.eq(target)) error = 'Semua termin sudah ditagih/dibayar — selisih tidak bisa dialokasikan';
+        } else {
+          const others = unbilled.slice(0, -1);
+          const remaining = target.minus(lockedSum).minus(sum(others.map((r) => r.idealAmount)));
+          if (remaining.isNegative()) error = 'Nilai PO baru lebih kecil dari termin yang sudah ditagih/dibayar';
+          unbilled.forEach((r, i) => {
+            const amount = i === unbilled.length - 1 ? remaining : r.idealAmount;
+            diffs.push({
+              id: r.payment?.id ?? null,
+              termin: r.terminKe,
+              status: r.payment?.status ?? 'BARU',
+              oldAmount: r.payment ? r.payment.amount.toFixed(2) : null,
+              newAmount: amount.toFixed(2),
+              changed: !r.payment || !r.payment.amount.eq(amount.toFixed(2)),
+            });
+          });
+        }
+        for (const p of locked) diffs.push({ id: p.id, termin: p.termin, status: p.status, oldAmount: p.amount.toFixed(2), newAmount: p.amount.toFixed(2), changed: false });
+        diffs.sort((a, b) => a.termin - b.termin);
+        kinds.push({ kind: t.kind, base: base.toFixed(2), target: target.toFixed(2), lockedSum: lockedSum.toFixed(2), error, diffs });
+
+        if (apply && !error) {
+          for (const d of diffs.filter((x) => x.changed)) {
+            if (d.id) {
+              await tx.clientPayment.update({ where: { id: d.id }, data: { amount: money(d.newAmount) } });
+              await this.audit.diff(tx, user.id, 'ClientPayment', d.id, { amount: d.oldAmount }, { amount: d.newAmount, sumber: 'hitung-ulang-termin' });
+            } else {
+              const r = rows.find((x) => x.terminKe === d.termin)!;
+              const p = await tx.clientPayment.create({
+                data: { clusterId, kind: t.kind, termin: d.termin, pct: rate(r.pct), amount: money(d.newAmount), keterangan: r.keterangan },
+              });
+              await this.audit.diff(tx, user.id, 'ClientPayment', p.id, null, { amount: d.newAmount, sumber: 'hitung-ulang-termin' });
+            }
           }
         }
       }
-      return { created, updated };
-    });
+      return { applied: apply && kinds.every((k) => !k.error), kinds };
+    };
+    if (!apply) return run(this.prisma as unknown as Tx);
+    const res = await this.prisma.$transaction(run);
+    const failed = res.kinds.find((k) => k.error);
+    if (failed) throw new ConflictException(failed.error);
+    return res;
   }
 }

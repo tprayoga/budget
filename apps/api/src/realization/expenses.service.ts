@@ -54,6 +54,7 @@ export function expenseDto(e: ExpenseFull, clusterId?: string) {
     allocationMethod: e.allocationMethod,
     allocations: e.allocations.map((a) => ({ clusterId: a.clusterId, clusterName: a.cluster.name, amount: s(a.amount)!, pct: s(a.pct)! })),
     rejectNote: e.rejectNote,
+    note: e.note,
     createdBy: e.createdBy,
     apiKey: e.apiKey,
     verifiedBy: e.verifiedBy,

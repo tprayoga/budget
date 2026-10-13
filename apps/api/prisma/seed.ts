@@ -6,6 +6,7 @@ import path from 'node:path';
 import { AuditService } from '../src/audit/audit.service';
 import { BudgetImporter } from '../src/import/budget-importer';
 import { generateClientPayments } from '../src/realization/termin-generator';
+import { seedDefaultRabRules } from '../src/import/default-rab-rules';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -240,6 +241,8 @@ async function main() {
   let termins = 0;
   for (const c of await prisma.cluster.findMany({ select: { id: true } })) termins += await generateClientPayments(prisma, c.id);
   if (termins) console.log(`Termin klien dibuat: ${termins}`);
+  const rules = await seedDefaultRabRules(prisma, admin?.id ?? null);
+  if (rules) console.log(`Aturan pemetaan import RAB default dibuat: ${rules}`);
 
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },

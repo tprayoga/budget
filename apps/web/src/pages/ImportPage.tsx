@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Money, PageHeader, cx } from '../components/ui';
-import { ImportLedgerTab, ImportRabTab } from './ImportRabTab';
+import { HeldItemsPanel, ImportLedgerTab, ImportRabTab } from './ImportRabTab';
 import { formatPersen } from '../lib/format';
 
 type Status = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'MISSING_IN_FILE';
@@ -190,7 +190,12 @@ export function ImportPage() {
         ))}
       </div>
       {active === 'budget' && <BudgetImportTab />}
-      {active === 'rab' && <ImportRabTab />}
+      {active === 'rab' && (
+        <div className="space-y-4">
+          <HeldItemsPanel />
+          <ImportRabTab />
+        </div>
+      )}
       {active === 'kas' && <ImportLedgerTab />}
     </div>
   );

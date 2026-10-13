@@ -64,8 +64,22 @@ export class RealizationController {
   @Post('clusters/:id/client-payments/generate')
   @HttpCode(200)
   @Roles('ADMIN', 'FINANCE')
-  generate(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('recalculate') recalculate?: string) {
-    return this.payments.generate(user, id, recalculate === 'true');
+  generate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.payments.generate(user, id);
+  }
+
+  /** Preview diff hitung ulang termin (nilai PO berubah). */
+  @Get('clusters/:id/client-payments/recalculate')
+  recalcPreview(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.payments.recalculate(user, id, false);
+  }
+
+  /** Terapkan hitung ulang: INVOICED/PAID tetap, selisih ke termin UNBILLED terakhir. */
+  @Post('clusters/:id/client-payments/recalculate')
+  @HttpCode(200)
+  @Roles('ADMIN', 'FINANCE')
+  recalcApply(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.payments.recalculate(user, id, true);
   }
 
   @Patch('client-payments/:id')

@@ -460,6 +460,8 @@ model Expense {
   sourceRef        String?           @unique
   allocationMethod AllocationMethod?
   rejectNote       String?
+  /// Catatan khusus (mis. "kasbon — perlu penyelesaian")
+  note             String?
   createdById      String?
   apiKeyId         String?
   verifiedById     String?
@@ -597,12 +599,44 @@ model ImportMappingRule {
   id          String            @id @default(cuid())
   sourceKey   String            @unique
   projectId   String
-  /// CLUSTER | PROJECT | SKIP
+  /// CLUSTER | PROJECT | SKIP | INHERIT | HOLD | DUPLICATE
   scope       String
   clusterId   String?
   clusterIds  String[]
   method      AllocationMethod?
+  /// [{ clusterId, pct }] untuk method MANUAL
+  manualPcts  Json?
   category    ExpenseCategory?
+  note        String?
   createdById String?
   updatedAt   DateTime          @updatedAt
+}
+
+/// Item import RAB yang ditahan (perlu konfirmasi). Datanya disimpan agar bisa dilepas tanpa import ulang.
+model ImportHeldItem {
+  id                String           @id @default(cuid())
+  sourceRef         String           @unique
+  projectId         String
+  sheet             String
+  cell              String
+  section           String
+  blockTitle        String?
+  groupTitle        String?
+  label             String
+  date              DateTime?        @db.Date
+  periodLabel       String?
+  amount            Decimal          @db.Decimal(18, 2)
+  suggestedCategory ExpenseCategory?
+  /// Usulan tujuan (JSON RabTarget) untuk form pelepasan
+  suggestedTarget   Json?
+  /// HELD | RELEASED | DISMISSED
+  status            String           @default("HELD")
+  note              String?
+  expenseId         String?
+  resolvedById      String?
+  resolvedAt        DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([projectId, status])
 }

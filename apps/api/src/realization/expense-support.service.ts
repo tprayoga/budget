@@ -12,6 +12,8 @@ export interface AllocationRequest {
   clusterIds?: string[];
   method?: AllocationMethod | null;
   manualAllocations?: { clusterId: string; amount: string }[];
+  /** MANUAL berbasis persentase (grup import RAB) */
+  manualPcts?: { clusterId: string; pct: string }[] | null;
 }
 
 /**
@@ -68,6 +70,7 @@ export class ExpenseSupportService {
       clusterId: c.id,
       nilaiPoImpl: c.nilaiPoImpl.toString(),
       manualAmount: req.manualAllocations?.find((m) => m.clusterId === c.id)?.amount ?? '0',
+      ...(method === 'MANUAL' && req.manualPcts?.length ? { manualPct: req.manualPcts.find((m) => m.clusterId === c.id)?.pct ?? '0' } : {}),
     }));
     try {
       return { method, lines: allocateGroup(amounts, targets, method) };

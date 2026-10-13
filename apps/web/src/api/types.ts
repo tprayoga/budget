@@ -265,6 +265,7 @@ export interface Expense {
   allocationMethod: AllocationMethod | null;
   allocations: { clusterId: string; clusterName: string; amount: string; pct: string }[];
   rejectNote: string | null;
+  note: string | null;
   createdBy: { id: string; name: string } | null;
   apiKey: { id: string; name: string } | null;
   verifiedBy: { id: string; name: string } | null;

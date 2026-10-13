@@ -1,4 +1,4 @@
-import type { AllocationMethod, Cluster, ExpenseCategory, PrismaClient } from '@prisma/client';
+import type { AllocationMethod, Cluster, ExpenseCategory, ImportMappingRule, Prisma, PrismaClient } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { dec, type RabDecision } from '@indotek/shared';
 import { clusterNameKey, parseRabWorkbook, type ParsedRab, type RabExpenseItem } from '@indotek/shared/xlsx';
@@ -7,12 +7,14 @@ import type { ExpenseSupportService } from '../realization/expense-support.servi
 import { flatExpense } from '../realization/expenses.service';
 import { money } from '../common/decimal';
 
+export type ManualPct = { clusterId: string; pct: string };
+
 export type RabTarget =
   | { scope: 'CLUSTER'; clusterId: string; clusterName: string }
-  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod }
-  | { scope: 'SKIP' };
+  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod; manualPcts?: ManualPct[] }
+  | { scope: 'SKIP' | 'HOLD' | 'DUPLICATE'; note: string | null };
 
-export type RabItemStatus = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED';
+export type RabItemStatus = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED' | 'HELD' | 'DUPLICATE';
 
 export interface RabPreviewItem extends RabExpenseItem {
   projectCode: string;
@@ -22,6 +24,8 @@ export interface RabPreviewItem extends RabExpenseItem {
   target: RabTarget | null;
   targetSource: 'AUTO' | 'RULE' | null;
   suggestedTarget: RabTarget | null;
+  /** Catatan dari keputusan (mis. alasan ditahan / duplikat / "kasbon — perlu penyelesaian"). */
+  note: string | null;
   status: RabItemStatus;
   diffs: { field: string; oldValue: string | null; newValue: string | null }[];
 }
@@ -33,15 +37,39 @@ export function mappingKeyOf(item: RabExpenseItem): string {
   return `RAB:${item.sheet}:${item.section}:${item.groupTitle ?? item.blockTitle ?? ''}`;
 }
 
-const descOf = (i: RabExpenseItem) => {
+export const descOf = (i: { label: string; blockTitle: string | null; groupTitle: string | null }) => {
   const ctx = i.blockTitle ?? i.groupTitle;
   return ctx ? `${i.label} — ${ctx}` : i.label;
 };
 
+const isAllocTarget = (t: RabTarget | null): t is Extract<RabTarget, { scope: 'CLUSTER' | 'PROJECT' }> =>
+  !!t && (t.scope === 'CLUSTER' || t.scope === 'PROJECT');
+
+/** Target dari aturan/keputusan; null bila tidak lengkap. */
+export function targetFromRule(
+  rule: Pick<ImportMappingRule, 'scope' | 'clusterId' | 'clusterIds' | 'method' | 'note'> & { manualPcts?: Prisma.JsonValue | ManualPct[] | null },
+  clusters: Cluster[],
+): RabTarget | null {
+  if (rule.scope === 'SKIP' || rule.scope === 'HOLD' || rule.scope === 'DUPLICATE') return { scope: rule.scope, note: rule.note ?? null };
+  if (rule.scope === 'CLUSTER' && rule.clusterId) {
+    const c = clusters.find((x) => x.id === rule.clusterId);
+    return c ? { scope: 'CLUSTER', clusterId: c.id, clusterName: c.name } : null;
+  }
+  if (rule.scope === 'PROJECT') {
+    const list = rule.clusterIds.length ? clusters.filter((c) => rule.clusterIds.includes(c.id)) : clusters.filter((c) => c.status !== 'CANCELLED');
+    if (!list.length) return null;
+    const method = rule.method ?? 'EQUAL';
+    const manualPcts = method === 'MANUAL' ? ((rule.manualPcts as ManualPct[] | null) ?? []) : undefined;
+    return { scope: 'PROJECT', clusterIds: list.map((c) => c.id), clusterNames: list.map((c) => c.name), method, ...(manualPcts ? { manualPcts } : {}) };
+  }
+  return null;
+}
+
 /**
  * Import realisasi dari file RAB. Item yang cluster/kategorinya tidak bisa ditentukan otomatis
  * berstatus NEEDS_MAPPING sampai pengguna memberi keputusan (disimpan sebagai ImportMappingRule).
- * Expense hasil import langsung TERVERIFIKASI (sumber: buku Finance), idempotent lewat sourceRef.
+ * Keputusan HOLD menyimpan item ke daftar "Ditahan — perlu konfirmasi" (ImportHeldItem) yang bisa dilepas
+ * kemudian tanpa import ulang; DUPLICATE/SKIP dilewati. Expense hasil import langsung TERVERIFIKASI.
  */
 export class RabImporter {
   constructor(
@@ -60,23 +88,6 @@ export class RabImporter {
   private async rules(keys: string[]) {
     const rows = await this.prisma.importMappingRule.findMany({ where: { sourceKey: { in: keys } } });
     return new Map(rows.map((r) => [r.sourceKey, r]));
-  }
-
-  private targetFrom(
-    rule: { scope: string; clusterId: string | null; clusterIds: string[]; method: AllocationMethod | null },
-    clusters: Cluster[],
-  ): RabTarget | null {
-    if (rule.scope === 'SKIP') return { scope: 'SKIP' };
-    if (rule.scope === 'CLUSTER' && rule.clusterId) {
-      const c = clusters.find((x) => x.id === rule.clusterId);
-      return c ? { scope: 'CLUSTER', clusterId: c.id, clusterName: c.name } : null;
-    }
-    if (rule.scope === 'PROJECT') {
-      const list = rule.clusterIds.length ? clusters.filter((c) => rule.clusterIds.includes(c.id)) : clusters.filter((c) => c.status !== 'CANCELLED');
-      if (!list.length) return null;
-      return { scope: 'PROJECT', clusterIds: list.map((c) => c.id), clusterNames: list.map((c) => c.name), method: rule.method ?? 'EQUAL' };
-    }
-    return null;
   }
 
   async preview(parsed: ParsedRab, allowedProjectIds?: string[]) {
@@ -110,8 +121,8 @@ export class RabImporter {
         const groupRule = rules.get(mk);
         let target: RabTarget | null = null;
         let targetSource: RabPreviewItem['targetSource'] = null;
-        if (itemRule && itemRule.scope !== 'INHERIT') target = this.targetFrom(itemRule, clusters);
-        if (!target && groupRule) target = this.targetFrom(groupRule, clusters);
+        if (itemRule && itemRule.scope !== 'INHERIT') target = targetFromRule(itemRule, clusters);
+        if (!target && groupRule && groupRule.scope !== 'INHERIT') target = targetFromRule(groupRule, clusters);
         if (target) targetSource = 'RULE';
         if (!target && it.section === 'SUBCON' && it.blockTitle) {
           const match = byKey.get(clusterNameKey(it.blockTitle));
@@ -122,18 +133,21 @@ export class RabImporter {
         }
         // usulan (tidak diterapkan otomatis): rata ke cluster yang namanya memuat kata blok, atau semua cluster project
         let suggestedTarget: RabTarget | null = null;
-        if (!target) {
+        if (!isAllocTarget(target)) {
           const words = clusterNameKey(it.groupTitle ?? it.blockTitle ?? '').split(' ').filter((w) => w.length > 3 && !['cluster', 'site', 'ccsi'].includes(w));
           const hits = active.filter((c) => words.some((w) => c.name.toLowerCase().includes(w)));
           const list = hits.length ? hits : active;
           if (list.length) suggestedTarget = { scope: 'PROJECT', clusterIds: list.map((c) => c.id), clusterNames: list.map((c) => c.name), method: 'EQUAL' };
         }
         const category = (itemRule?.category ?? groupRule?.category ?? it.category) as ExpenseCategory | null;
+        const note = itemRule?.note ?? groupRule?.note ?? null;
         const prev = existing.get(sourceRefOf(it));
         let status: RabItemStatus;
         const diffs: RabPreviewItem['diffs'] = [];
         if (target?.scope === 'SKIP') status = 'SKIPPED';
-        else if (!target || !category) status = 'NEEDS_MAPPING';
+        else if (target?.scope === 'HOLD') status = 'HELD';
+        else if (target?.scope === 'DUPLICATE') status = 'DUPLICATE';
+        else if (!isAllocTarget(target) || !category) status = 'NEEDS_MAPPING';
         else if (!prev) status = 'NEW';
         else {
           const tIds = target.scope === 'CLUSTER' ? [target.clusterId] : target.clusterIds;
@@ -144,7 +158,13 @@ export class RabImporter {
             ['description', prev.description, descOf(it)],
             ['clusters', prev.allocations.map((a) => a.clusterId).sort().join(','), [...tIds].sort().join(',')],
             ['method', prev.allocationMethod, target.scope === 'PROJECT' ? target.method : null],
+            ['note', prev.note, note],
           ];
+          if (target.scope === 'PROJECT' && target.method === 'MANUAL') {
+            const want = new Map((target.manualPcts ?? []).map((m) => [m.clusterId, dec(m.pct)]));
+            const drift = prev.allocations.some((a) => !dec(a.pct.toString()).toDecimalPlaces(6).eq((want.get(a.clusterId) ?? dec(0)).toDecimalPlaces(6)));
+            if (drift) cmp.push(['manualPcts', 'lama', 'baru']);
+          }
           for (const [field, o, n] of cmp) if (o !== n) diffs.push({ field, oldValue: o, newValue: n });
           status = diffs.length ? 'CHANGED' : 'UNCHANGED';
         }
@@ -158,12 +178,13 @@ export class RabImporter {
           target,
           targetSource,
           suggestedTarget,
+          note,
           status,
           diffs,
         });
       }
     }
-    const summary: Record<RabItemStatus, number> = { NEW: 0, CHANGED: 0, UNCHANGED: 0, NEEDS_MAPPING: 0, SKIPPED: 0 };
+    const summary: Record<RabItemStatus, number> = { NEW: 0, CHANGED: 0, UNCHANGED: 0, NEEDS_MAPPING: 0, SKIPPED: 0, HELD: 0, DUPLICATE: 0 };
     for (const i of items) summary[i.status]++;
     return { sheets, items, summary, ledgerRows: parsed.ledger.length, ledgerSheet: parsed.ledgerSheet };
   }
@@ -173,29 +194,11 @@ export class RabImporter {
     for (const [key, d] of Object.entries(decisions)) {
       const projectId = projectByKey.get(key);
       if (!projectId) continue;
-      const data = {
-        projectId,
-        scope: d.scope,
-        clusterId: d.scope === 'CLUSTER' ? (d.clusterId ?? null) : null,
-        clusterIds: d.scope === 'PROJECT' ? (d.clusterIds ?? []) : [],
-        method: d.scope === 'PROJECT' ? (d.method ?? 'EQUAL') : null,
-        category: d.category ?? null,
-        createdById: userId,
-      };
-      const before = await this.prisma.importMappingRule.findUnique({ where: { sourceKey: key } });
-      await this.prisma.importMappingRule.upsert({ where: { sourceKey: key }, create: { sourceKey: key, ...data }, update: data });
-      await this.audit.diff(this.prisma, userId, 'ImportMappingRule', key, before ? { scope: before.scope, clusterId: before.clusterId, clusterIds: before.clusterIds.join(','), method: before.method, category: before.category } : null, {
-        scope: data.scope,
-        clusterId: data.clusterId,
-        clusterIds: data.clusterIds.join(','),
-        method: data.method,
-        category: data.category,
-      });
+      await saveRule(this.prisma, this.audit, key, projectId, d, userId);
     }
   }
 
   async commit(parsed: ParsedRab, decisions: Record<string, RabDecision>, userId: string | null, allowedProjectIds?: string[]) {
-    // proyek untuk setiap kunci keputusan
     const first = await this.preview(parsed, allowedProjectIds);
     const projectByKey = new Map<string, string>();
     for (const i of first.items) {
@@ -208,12 +211,16 @@ export class RabImporter {
 
     let created = 0;
     let updated = 0;
+    let held = 0;
     // grup alokasi: semua item siap dalam satu mappingKey + target yang sama dialokasikan kumulatif
     const groups = new Map<string, RabPreviewItem[]>();
     for (const i of preview.items) {
       if (!['NEW', 'CHANGED', 'UNCHANGED'].includes(i.status)) continue;
-      const t = i.target!;
-      const gk = t.scope === 'PROJECT' ? `${i.mappingKey}|${[...t.clusterIds].sort().join(',')}|${t.method}` : `item|${i.key}`;
+      const t = i.target as Extract<RabTarget, { scope: 'CLUSTER' | 'PROJECT' }>;
+      const gk =
+        t.scope === 'PROJECT'
+          ? `${i.mappingKey}|${[...t.clusterIds].sort().join(',')}|${t.method}|${JSON.stringify(t.manualPcts ?? [])}`
+          : `item|${i.key}`;
       groups.set(gk, [...(groups.get(gk) ?? []), i]);
     }
 
@@ -221,11 +228,13 @@ export class RabImporter {
       async (tx) => {
         for (const group of groups.values()) {
           const sorted = [...group].sort((a, b) => a.row - b.row || a.cell.localeCompare(b.cell));
-          const t = sorted[0].target!;
+          const t = sorted[0].target as Extract<RabTarget, { scope: 'CLUSTER' | 'PROJECT' }>;
           const projectId = sorted[0].projectId!;
           const alloc = await this.support.computeGroup(
             sorted.map((i) => i.amount),
-            t.scope === 'CLUSTER' ? { projectId, clusterId: t.clusterId } : { projectId, clusterIds: (t as { clusterIds: string[] }).clusterIds, method: (t as { method: AllocationMethod }).method },
+            t.scope === 'CLUSTER'
+              ? { projectId, clusterId: t.clusterId }
+              : { projectId, clusterIds: t.clusterIds, method: t.method, manualPcts: t.manualPcts },
             tx,
           );
           for (let k = 0; k < sorted.length; k++) {
@@ -241,6 +250,7 @@ export class RabImporter {
               budgetCode,
               description: descOf(it),
               amount: money(it.amount),
+              note: it.note,
               allocationMethod: t.scope === 'PROJECT' ? alloc.method : null,
               status: 'TERVERIFIKASI' as const,
               source: 'IMPORT_RAB' as const,
@@ -258,9 +268,71 @@ export class RabImporter {
             else created++;
           }
         }
+
+        // item ditahan → daftar "Ditahan — perlu konfirmasi" (data disimpan, bisa dilepas tanpa import ulang)
+        for (const it of preview.items.filter((i) => i.status === 'HELD')) {
+          const ref = sourceRefOf(it);
+          const prev = await tx.importHeldItem.findUnique({ where: { sourceRef: ref } });
+          if (prev && prev.status !== 'HELD') continue;
+          const data = {
+            projectId: it.projectId!,
+            sheet: it.sheet,
+            cell: it.cell,
+            section: it.section,
+            blockTitle: it.blockTitle,
+            groupTitle: it.groupTitle,
+            label: it.label,
+            date: it.date ? new Date(`${it.date}T00:00:00Z`) : null,
+            periodLabel: it.periodText,
+            amount: money(it.amount),
+            suggestedCategory: it.category ?? it.suggestedCategory,
+            suggestedTarget: (it.suggestedTarget ?? undefined) as Prisma.InputJsonValue | undefined,
+            note: it.note,
+          };
+          if (prev) await tx.importHeldItem.update({ where: { id: prev.id }, data });
+          else {
+            const h = await tx.importHeldItem.create({ data: { ...data, sourceRef: ref } });
+            await this.audit.diff(tx, userId, 'ImportHeldItem', h.id, null, { sourceRef: ref, amount: it.amount, status: 'HELD', note: it.note });
+          }
+          held++;
+        }
       },
       { timeout: 180_000 },
     );
-    return { created, updated, preview: await this.preview(parsed, allowedProjectIds) };
+    return { created, updated, held, preview: await this.preview(parsed, allowedProjectIds) };
   }
+}
+
+/** Simpan/ganti satu aturan pemetaan + audit. */
+export async function saveRule(
+  db: PrismaClient | Prisma.TransactionClient,
+  audit: AuditService,
+  key: string,
+  projectId: string,
+  d: RabDecision,
+  userId: string | null,
+) {
+  const alloc = d.scope === 'PROJECT';
+  const data = {
+    projectId,
+    scope: d.scope,
+    clusterId: d.scope === 'CLUSTER' ? (d.clusterId ?? null) : null,
+    clusterIds: alloc ? (d.clusterIds ?? []) : [],
+    method: alloc ? (d.method ?? 'EQUAL') : null,
+    manualPcts: alloc && d.method === 'MANUAL' ? ((d.manualPcts ?? []) as Prisma.InputJsonValue) : undefined,
+    category: d.category ?? null,
+    note: d.note ?? null,
+    createdById: userId,
+  };
+  const before = await db.importMappingRule.findUnique({ where: { sourceKey: key } });
+  await db.importMappingRule.upsert({ where: { sourceKey: key }, create: { sourceKey: key, ...data }, update: data });
+  const flat = (r: { scope: string; clusterId: string | null; clusterIds: string[]; method: string | null; category: string | null; note: string | null }) => ({
+    scope: r.scope,
+    clusterId: r.clusterId,
+    clusterIds: r.clusterIds.join(','),
+    method: r.method,
+    category: r.category,
+    note: r.note,
+  });
+  await audit.diff(db, userId, 'ImportMappingRule', key, before ? flat(before) : null, flat(data));
 }

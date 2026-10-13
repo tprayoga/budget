@@ -5,8 +5,10 @@ export interface AllocationTarget {
   clusterId: string;
   /** nilaiPoImpl (dipakai PRO_RATA_PO). */
   nilaiPoImpl?: Num;
-  /** Nominal untuk metode MANUAL. */
+  /** Nominal untuk metode MANUAL (satu expense). */
   manualAmount?: Num;
+  /** Porsi 0..1 untuk metode MANUAL berbasis persentase (grup import); Σ harus 1. */
+  manualPct?: Num;
 }
 
 export interface AllocationLine {
@@ -38,6 +40,13 @@ export function allocateGroup(
   method: AllocationMethod,
 ): AllocationLine[][] {
   if (!targets.length) throw new Error('Minimal satu cluster tujuan alokasi');
+  if (method === 'MANUAL' && targets.every((t) => t.manualPct !== undefined && t.manualPct !== null)) {
+    // MANUAL persentase: dialokasikan kumulatif seperti pro-rata dengan bobot = persentase
+    const w = targets.map((t) => dec(t.manualPct));
+    if (!sum(w).eq(1)) throw new Error('Total persentase alokasi manual harus 100%');
+    if (w.some((x) => x.isNegative())) throw new Error('Persentase alokasi tidak boleh negatif');
+    return weightedGroup(amounts, targets, w);
+  }
   if (method === 'MANUAL') {
     if (amounts.length !== 1) throw new Error('Alokasi manual hanya untuk satu expense');
     const total = dec(amounts[0]);
@@ -47,7 +56,10 @@ export function allocateGroup(
     }
     return [lines.map((l) => ({ ...l, pct: total.isZero() ? new D(0) : l.amount.div(total) }))];
   }
-  const w = weights(targets, method);
+  return weightedGroup(amounts, targets, weights(targets, method));
+}
+
+function weightedGroup(amounts: Num[], targets: AllocationTarget[], w: D[]): AllocationLine[][] {
   const W = sum(w);
   const last = targets.length - 1;
   let cumPrev = new D(0);

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Paperclip, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ALLOCATION_METHOD_LABEL,
@@ -140,6 +140,7 @@ export function ExpenseList({ query, clusterId, showProject }: { query: string; 
                   {e.fundRequest && ` · ${e.fundRequest.number ?? 'pengajuan'}`}
                 </div>
                 {e.rejectNote && <div className="text-[11px] text-red-600">Ditolak: {e.rejectNote}</div>}
+                {e.note && <div className="text-[11px] font-medium text-amber-700">Catatan: {e.note}</div>}
               </td>
               <td className="td num">
                 <Money value={clusterId && e.clusterAmount ? e.clusterAmount : e.amount} />
@@ -379,6 +380,13 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
     mutationFn: () => api(`/clusters/${clusterId}/client-payments`, { method: 'POST', json: { kind: add.kind, termin: Number(add.termin), amount: rpInputToValue(add.amount) ?? '0', keterangan: add.keterangan || null } }),
     onSuccess: () => { setAddOpen(false); invalidateAll(qc); },
   });
+  type Recalc = { kinds: { kind: string; base: string; target: string; lockedSum: string; error: string | null; diffs: { id: string | null; termin: number; status: string; oldAmount: string | null; newAmount: string; changed: boolean }[] }[] };
+  const [recalc, setRecalc] = useState<Recalc | null>(null);
+  const preview = useMutation({ mutationFn: () => api<Recalc>(`/clusters/${clusterId}/client-payments/recalculate`), onSuccess: setRecalc });
+  const applyRecalc = useMutation({
+    mutationFn: () => api(`/clusters/${clusterId}/client-payments/recalculate`, { method: 'POST' }),
+    onSuccess: () => { setRecalc(null); invalidateAll(qc); },
+  });
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const { payments, templates } = q.data!;
@@ -393,8 +401,18 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
             ? templates.map((t) => `${t.kind === 'PERMIT' ? 'Permit' : 'Implementasi'}: ${t.lines} termin${t.agingDays != null ? `, jatuh tempo ${t.agingDays} hari ${t.agingType === 'WORKING' ? 'kerja' : 'kalender'}` : ''}`).join(' · ')
             : 'Client ini belum punya template termin — input manual.'}
         </span>
-        {editable && <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAddOpen(true)}><Plus className="h-3.5 w-3.5" /> Termin manual</button>}
+        {editable && (
+          <div className="flex gap-2">
+            {templates.length > 0 && (
+              <button className="btn-secondary px-2 py-1 text-xs" disabled={preview.isPending} onClick={() => preview.mutate()}>
+                <RefreshCw className="h-3.5 w-3.5" /> Hitung ulang termin
+              </button>
+            )}
+            <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAddOpen(true)}><Plus className="h-3.5 w-3.5" /> Termin manual</button>
+          </div>
+        )}
       </div>
+      <ErrorBox error={preview.error ? errorMessage(preview.error) : null} />
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50"><tr><th className="th">Termin</th><th className="th num">Bruto</th><th className="th">Invoice</th><th className="th">Jatuh tempo</th><th className="th num">Diterima</th><th className="th num">Potongan (PAJAK)</th><th className="th">Status</th><th className="th" /></tr></thead>
@@ -454,6 +472,48 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
           const pot = paymentDeduction(rpInputToValue(form.amount) ?? '0', rpInputToValue(form.paidAmount));
           return pot.gt(0) ? <p className="text-xs text-amber-700">Potongan <Money value={pot.toString()} /> akan dicatat sebagai realisasi PAJAK.</p> : null;
         })()}
+      </Modal>
+      <Modal
+        open={!!recalc}
+        title="Hitung ulang termin (nilai PO terkini)"
+        onClose={() => setRecalc(null)}
+        footer={
+          <>
+            <button className="btn-secondary" onClick={() => setRecalc(null)}>Batal</button>
+            <button
+              className="btn-primary"
+              disabled={applyRecalc.isPending || !recalc || recalc.kinds.some((k) => k.error) || !recalc.kinds.some((k) => k.diffs.some((d) => d.changed))}
+              onClick={() => applyRecalc.mutate()}
+            >
+              Terapkan
+            </button>
+          </>
+        }
+      >
+        <p className="text-xs text-slate-500">Termin yang sudah ditagih/dibayar tidak berubah. Selisih masuk ke termin belum ditagih yang terakhir.</p>
+        <ErrorBox error={applyRecalc.error ? errorMessage(applyRecalc.error) : null} />
+        {recalc?.kinds.map((k) => (
+          <div key={k.kind} className="space-y-1" data-testid={`recalc-${k.kind}`}>
+            <div className="text-sm font-semibold">
+              {k.kind === 'PERMIT' ? 'Permit' : 'Implementasi'} — target <Money value={k.target} /> <span className="font-normal text-slate-500">(nilai PO <Money value={k.base} />)</span>
+            </div>
+            {k.error && <p className="text-xs text-red-600">{k.error}</p>}
+            <table className="w-full text-xs">
+              <thead><tr><th className="th">Termin</th><th className="th">Status</th><th className="th num">Sebelum</th><th className="th num">Sesudah</th></tr></thead>
+              <tbody>
+                {k.diffs.map((d) => (
+                  <tr key={d.termin} className={cx('border-t', d.changed && 'bg-accent-50 font-semibold')}>
+                    <td className="td">{d.termin}</td>
+                    <td className="td">{d.status === 'BARU' ? 'Baru' : CLIENT_PAYMENT_STATUS_LABEL[d.status as keyof typeof CLIENT_PAYMENT_STATUS_LABEL]}</td>
+                    <td className="td num">{d.oldAmount ? <Money value={d.oldAmount} plain /> : '—'}</td>
+                    <td className="td num"><Money value={d.newAmount} plain /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+        {recalc && !recalc.kinds.some((k) => k.diffs.some((d) => d.changed)) && <p className="text-sm text-emerald-700">Tidak ada perubahan — termin sudah sesuai nilai PO.</p>}
       </Modal>
       <Modal
         open={addOpen}

@@ -41,6 +41,13 @@ describe('Acceptance — alokasi OPS Evantama', () => {
     expect(ok[1].pct.toString()).toBe('0.4');
   });
 
+  it('MANUAL persentase untuk grup (kumulatif, Σ harus 100%)', () => {
+    const t = [{ clusterId: 'a', manualPct: '0.7' }, { clusterId: 'b', manualPct: '0.3' }];
+    const g = allocateGroup(['100', '200.01'], t, 'MANUAL');
+    expect(g.map((i) => i.map((l) => l.amount.toFixed(2)))).toEqual([['70.00', '30.00'], ['140.01', '60.00']]);
+    expect(() => allocateGroup(['1'], [{ clusterId: 'a', manualPct: '0.7' }, { clusterId: 'b', manualPct: '0.2' }], 'MANUAL')).toThrow(/100%/);
+  });
+
   it('satu cluster → 100%', () => {
     expect(allocate('18293488', [{ clusterId: 'GEMPOL' }], 'EQUAL')[0].amount.toString()).toBe('18293488');
   });

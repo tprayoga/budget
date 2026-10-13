@@ -282,16 +282,41 @@ export const webhookExpenseSchema = z.object({
 });
 export type WebhookExpenseInput = z.infer<typeof webhookExpenseSchema>;
 
+/** Porsi alokasi manual per cluster (rasio 0..1, Σ = 1) untuk grup import. */
+export const manualPctSchema = z.object({ clusterId: z.string().min(1), pct: zRate });
+
 /**
  * Keputusan pemetaan import RAB, per kunci grup/blok atau per item.
  * INHERIT = hanya menetapkan kategori; tujuan cluster mengikuti keputusan grup.
+ * HOLD = ditahan (perlu konfirmasi, bisa dilepas kemudian); DUPLICATE = duplikat (dilewati); SKIP = dilewati.
  */
-export const rabDecisionSchema = z.object({
-  scope: z.enum(['CLUSTER', 'PROJECT', 'SKIP', 'INHERIT']),
+export const RAB_SCOPES = ['CLUSTER', 'PROJECT', 'SKIP', 'INHERIT', 'HOLD', 'DUPLICATE'] as const;
+export const rabDecisionSchema = z
+  .object({
+    scope: z.enum(RAB_SCOPES),
+    clusterId: z.string().nullish(),
+    clusterIds: z.array(z.string()).optional(),
+    method: z.enum(ALLOCATION_METHODS).nullish(),
+    manualPcts: z.array(manualPctSchema).optional(),
+    category: z.enum(EXPENSE_CATEGORIES).nullish(),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .refine((d) => d.method !== 'MANUAL' || (d.manualPcts?.length ?? 0) > 0, { message: 'Alokasi manual wajib persentase per cluster' })
+  .refine((d) => d.method !== 'MANUAL' || Math.abs((d.manualPcts ?? []).reduce((a, x) => a + Number(x.pct), 0) - 1) < 1e-9, {
+    message: 'Total persentase alokasi manual harus 100%',
+  });
+
+/** Lepas item yang ditahan: tentukan tujuan & kategori. */
+export const heldReleaseSchema = z.object({
+  scope: z.enum(['CLUSTER', 'PROJECT']),
   clusterId: z.string().nullish(),
   clusterIds: z.array(z.string()).optional(),
   method: z.enum(ALLOCATION_METHODS).nullish(),
-  category: z.enum(EXPENSE_CATEGORIES).nullish(),
+  manualPcts: z.array(manualPctSchema).optional(),
+  category: z.enum(EXPENSE_CATEGORIES),
+  note: z.string().trim().max(500).nullish(),
 });
+export type HeldReleaseInput = z.infer<typeof heldReleaseSchema>;
+export const heldDismissSchema = z.object({ scope: z.enum(['SKIP', 'DUPLICATE']), note: z.string().trim().min(3).max(500) });
 export type RabDecision = z.infer<typeof rabDecisionSchema>;
 export const rabCommitSchema = z.object({ decisions: z.record(rabDecisionSchema).optional() });
