@@ -69,6 +69,21 @@ export interface RabInvoice {
   paid: boolean;
 }
 
+/** Penyesuaian PO (baris "Deduction Termin 1 + Addwork") → ClusterPo ADDWORK / DEDUCTION. */
+export interface RabPoAdjustment {
+  /** `{sheet}!{cell}` atau `{sheet}!{cell}#n` bila satu sel berisi beberapa suku (mis. `=398300-730800`). */
+  key: string;
+  sheet: string;
+  cell: string;
+  blockTitle: string | null;
+  kind: 'ADDWORK' | 'DEDUCTION';
+  /** Bertanda: ADDWORK positif, DEDUCTION negatif. */
+  amount: string;
+  /** Rumus/isi sel asal dan rumus baris total, untuk ditampilkan di preview. */
+  source: string;
+  totalFormula: string | null;
+}
+
 export interface RabProjectSheet {
   sheetName: string;
   projectCode: string;
@@ -76,6 +91,7 @@ export interface RabProjectSheet {
   items: RabExpenseItem[];
   totals: RabTotal[];
   invoices: RabInvoice[];
+  poAdjustments: RabPoAdjustment[];
   warnings: string[];
 }
 
@@ -587,8 +603,64 @@ export function parseRabProjectSheet(ws: Worksheet): RabProjectSheet {
     items: list,
     totals,
     invoices: parseInvoices(ws),
+    poAdjustments: parsePoAdjustments(ws),
     warnings: [],
   };
+}
+
+const ADJ_LABEL_RE = /deduction|addwork/i;
+
+/**
+ * Baris penyesuaian PO (kolom A "Deduction Termin 1 + Addwork"), di kolom Realisasi tiap blok.
+ * Tanda ditentukan dari rumus baris "Total after deduction" di bawahnya: `X9+X10` → apa adanya, `X9-X10` → dibalik.
+ * Sel berumus konstanta (`=398300-730800`) dipecah per suku: suku positif = ADDWORK, negatif = DEDUCTION.
+ * Judul blok = baris judul (kolom A berawalan "Proyeksi Project", default baris 2) pada kolom yang sama.
+ */
+export function parsePoAdjustments(ws: Worksheet): RabPoAdjustment[] {
+  let adjRow = 0;
+  let titleRow = 0;
+  for (let r = 1; r <= Math.min(ws.rowCount, 30); r++) {
+    const a = text(ws, r, 1);
+    if (!a) continue;
+    if (!titleRow && r < 6 && /^proyeksi project/i.test(a)) titleRow = r;
+    if (ADJ_LABEL_RE.test(a) && !/total/i.test(a)) {
+      adjRow = r;
+      break;
+    }
+  }
+  if (!adjRow) return [];
+  const out: RabPoAdjustment[] = [];
+  ws.getRow(adjRow).eachCell({ includeEmpty: false }, (cell, c) => {
+    if (c === 1) return;
+    const raw = cell.value;
+    const f = cellFormula(ws, adjRow, c);
+    const totalF = cellFormula(ws, adjRow + 1, c);
+    const col = colLetter(c);
+    const negate = !!totalF && new RegExp(`-\\s*\\$?${col}\\$?${adjRow}\\b`, 'i').test(totalF);
+    let terms: D[];
+    if (f !== null && isConstantFormula(f)) {
+      terms = (f.replace(/^=/, '').replace(/\s+/g, '').match(/[+-]?\d+(?:\.\d+)?/g) ?? []).map((t) => new D(t));
+    } else {
+      const v = num(ws, adjRow, c);
+      if (!v) return;
+      terms = [v];
+    }
+    terms = terms.map((t) => (negate ? t.neg() : t)).filter((t) => !t.isZero());
+    const title = text(ws, titleRow || 2, c);
+    terms.forEach((t, i) =>
+      out.push({
+        key: `${ws.name}!${addr(adjRow, c)}${terms.length > 1 ? `#${i + 1}` : ''}`,
+        sheet: ws.name,
+        cell: addr(adjRow, c),
+        blockTitle: title,
+        kind: t.isNegative() ? 'DEDUCTION' : 'ADDWORK',
+        amount: t.toString(),
+        source: f !== null ? `=${f.replace(/^=/, '')}` : String(raw),
+        totalFormula: totalF ? `=${totalF.replace(/^=/, '')}` : null,
+      }),
+    );
+  });
+  return out;
 }
 
 /**

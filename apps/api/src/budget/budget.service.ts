@@ -12,6 +12,7 @@ import { SettingsService, type EffectiveSetting } from '../settings/settings.ser
 import type { AuthUser } from '../auth/auth.types';
 import { clusterCalcInput, clusterDto, type ClusterWithLines } from './budget.mapper';
 import { RealizationService } from '../realization/realization.service';
+import { computeOverruns } from '../notifications/overrun';
 
 /** Preview what-if: menimpa setting global tanpa menyimpan. */
 export interface BudgetPreview {
@@ -97,6 +98,8 @@ export class BudgetService {
       global: await this.settingFor(null, preview),
       projects: out,
       grandTotal: projectTotalToDto(calcProjectTotal(allResults)),
+      // pos/cluster yang realisasinya melewati ambang Setting.realisasiOverPct
+      overBudget: await computeOverruns(this.prisma, projects.flatMap((p) => p.clusters.map((c) => c.id))),
     };
   }
 }

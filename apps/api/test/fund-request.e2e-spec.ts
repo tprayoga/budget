@@ -43,9 +43,10 @@ describe('Acceptance A — form pengajuan 100% lewat API', () => {
     expect(fr.terbilang).toBe('Tujuh juta tujuh ratus delapan ribu seratus tujuh puluh rupiah');
     expect(fr.snapshot).toMatchObject({
       nilaiProyek: '9440850.00',
-      infoBunga: '865225.30',
+      // info pendukung mengikuti setting efektif (default 2.3: retensi = piutang); total diajukan tidak terpengaruh
+      infoBunga: '770816.80',
       infoRetensi: '944085.00',
-      infoProfit: '-76628.30',
+      infoProfit: '961865.20',
       terminKe: 1,
     });
     expect(fr.justifikasi).toBe('Modal kerja pelaksanaan pekerjaan FTTH WANASARI RW 01 SUBANG untuk PT ADW.');
@@ -153,7 +154,7 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
     await ctx.api('pm').put(`/clusters/${wanasari}/budget-lines`, [{ code: 'INDIRECT', mode: 'PCT', pct: '0.02' }]).expect(200);
     const frozen = await ctx.api('pm').get(`/fund-requests/${fr1}`).expect(200);
     expect(frozen.body.snapshot.interestRate).toBe('0.1');
-    expect(frozen.body.snapshot.infoBunga).toBe('865225.3');
+    expect(frozen.body.snapshot.infoBunga).toBe('770816.8');
     expect(line(frozen.body, 'INDIRECT').budgetAmount).toBe('94408.50');
     // draft ikut berubah
     const draft = await ctx.api('pm').post('/fund-requests', { clusterId: wanasari, tanggal: '2026-10-21', lines: pct('0') }).expect(201);

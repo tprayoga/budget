@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  PO_KINDS,
   AGING_TYPES,
   ALLOCATION_METHODS,
   CLIENT_PAYMENT_STATUSES,
@@ -107,6 +108,7 @@ export const settingSchema = z.object({
   rekeningNo: z.string().trim().max(40).nullish(),
   rekeningNama: z.string().trim().max(120).nullish(),
   realisasiWarnPct: zRate.refine((v) => Number(v) > 0 && Number(v) <= 1, { message: 'Antara 0 dan 100%' }).nullish(),
+  realisasiOverPct: zRate.refine((v) => Number(v) > 0 && Number(v) <= 5, { message: 'Antara 0 dan 500%' }).nullish(),
 });
 export type SettingInput = z.infer<typeof settingSchema>;
 /** Setting global: interestRate & retensiAsCost tidak boleh null. */
@@ -247,6 +249,7 @@ export const clientPaymentUpdateSchema = z.object({
 export type ClientPaymentUpdateInput = z.infer<typeof clientPaymentUpdateSchema>;
 
 export const clientPaymentCreateSchema = z.object({
+  poId: z.string().min(1),
   kind: z.enum(TERMIN_KINDS),
   termin: z.number().int().min(1).max(20),
   amount: zNonNegDecimal,
@@ -326,3 +329,47 @@ export type HeldReleaseInput = z.infer<typeof heldReleaseSchema>;
 export const heldDismissSchema = z.object({ scope: z.enum(['SKIP', 'DUPLICATE']), note: z.string().trim().min(3).max(500) });
 export type RabDecision = z.infer<typeof rabDecisionSchema>;
 export const rabCommitSchema = z.object({ decisions: z.record(rabDecisionSchema).optional() });
+
+// ---------------------------------------------------------------- Fase 2.3
+
+const zSignedDecimal = zDecimal;
+
+export const clusterPoSchema = z
+  .object({
+    kind: z.enum(PO_KINDS),
+    poNumber: z.string().trim().max(120).nullish(),
+    poDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullish(),
+    amount: zSignedDecimal,
+    passThroughCost: zNonNegDecimal.default('0'),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .refine((p) => (p.kind === 'DEDUCTION' ? Number(p.amount) <= 0 : Number(p.amount) >= 0), {
+    message: 'Deduction harus negatif; jenis PO lain tidak boleh negatif',
+    path: ['amount'],
+  });
+export type ClusterPoInput = z.infer<typeof clusterPoSchema>;
+export const clusterPoUpdateSchema = z.object({
+  poNumber: z.string().trim().max(120).nullish(),
+  poDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+  amount: zSignedDecimal.optional(),
+  passThroughCost: zNonNegDecimal.optional(),
+  note: z.string().trim().max(500).nullish(),
+});
+export type ClusterPoUpdateInput = z.infer<typeof clusterPoUpdateSchema>;
+
+/** Terapkan referensi tagihan RAB ke termin: bruto diisi FINANCE; paidAmount = nilai net referensi. */
+export const applyInvoiceRefSchema = z.object({
+  refId: z.string().min(1),
+  amount: zNonNegDecimal.refine((v) => Number(v) > 0, { message: 'Bruto harus > 0' }),
+  paidDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+});
+export type ApplyInvoiceRefInput = z.infer<typeof applyInvoiceRefSchema>;

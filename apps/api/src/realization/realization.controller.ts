@@ -3,6 +3,8 @@ import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import {
   categoryMappingSchema,
+  applyInvoiceRefSchema,
+  type ApplyInvoiceRefInput,
   clientPaymentCreateSchema,
   clientPaymentUpdateSchema,
   EXPENSE_CATEGORIES,
@@ -87,6 +89,14 @@ export class RealizationController {
   @ApiZodBody(clientPaymentUpdateSchema)
   updatePayment(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(clientPaymentUpdateSchema) body: ClientPaymentUpdateInput) {
     return this.payments.update(user, id, body);
+  }
+
+  /** Terapkan referensi tagihan RAB ke termin (konfirmasi FINANCE; tidak pernah otomatis). */
+  @Post('client-payments/:id/apply-reference')
+  @Roles('ADMIN', 'FINANCE')
+  @ApiZodBody(applyInvoiceRefSchema)
+  applyReference(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(applyInvoiceRefSchema) body: ApplyInvoiceRefInput) {
+    return this.payments.applyReference(user, id, body);
   }
 
   @Delete('client-payments/:id')

@@ -111,7 +111,7 @@ describe('Acceptance K — pembayaran klien → expense PAJAK otomatis', () => {
   });
 });
 
-describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
+describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2 & 2.3)', () => {
   type PItem = {
     sheet: string; cell: string; key: string; status: string; mappingKey: string; targetSource: string | null; note: string | null;
     category: string | null; amount: string; target: { scope: string; clusterId?: string; method?: string; clusterNames?: string[]; clusterFilter?: string } | null; warnings: string[];
@@ -121,10 +121,10 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
   let opsKey: string;
   const cl = (name: string) => ctx.prisma.cluster.findFirstOrThrow({ where: { name } });
 
-  it('dry-run: semua item terpetakan; ditahan 2, duplikat 3, dilewati 3, perlu dipetakan 0', async () => {
+  it('dry-run: semua item terpetakan; ditahan 0, duplikat 3, dilewati 3, perlu dipetakan 0', async () => {
     const res = await rabUpload('dry-run').expect(200);
     items = res.body.items;
-    expect(res.body.summary).toMatchObject({ NEEDS_MAPPING: 0, HELD: 2, DUPLICATE: 3, SKIPPED: 3 });
+    expect(res.body.summary).toMatchObject({ NEEDS_MAPPING: 0, HELD: 0, DUPLICATE: 3, SKIPPED: 3 });
     expect(at('EVANTAMA', 'D36')).toMatchObject({ status: 'NEW', targetSource: 'AUTO', target: { scope: 'CLUSTER', clusterId: sinagar } });
     expect(at('ADW', 'D35').warnings.join(' ')).toMatch(/≠ formula total/);
     opsKey = at('EVANTAMA', 'D49').mappingKey;
@@ -134,8 +134,9 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     expect(at('CCSI', 'D36')).toMatchObject({ status: 'NEW', category: 'PJD', target: { method: 'PRO_RATA_PO' } });
     expect(at('CCSI', 'D31')).toMatchObject({ status: 'NEW', category: 'PERMIT', target: { method: 'MANUAL' } });
     expect(at('CCSI', 'C57')).toMatchObject({ status: 'NEW', category: 'OPS', note: 'kasbon — perlu penyelesaian' });
-    expect(at('CCSI', 'C58').status).toBe('HELD');
-    expect(at('CCSI', 'J31')).toMatchObject({ status: 'HELD', note: 'pendapatan permit Semarang belum tercatat — cek apakah pass-through' });
+    // keputusan 2.3: C58 = fee marketing (pro-rata PO Manado), J31 = permit Semarang pass-through
+    expect(at('CCSI', 'C58')).toMatchObject({ status: 'NEW', category: 'MARKETING_FEE', note: 'fee marketing — konfirmasi user 14 Okt 2026', target: { method: 'PRO_RATA_PO' } });
+    expect(at('CCSI', 'J31')).toMatchObject({ status: 'NEW', category: 'PERMIT', target: { scope: 'CLUSTER', clusterId: (await cl('Padangsari RW 12 & 13 (Semarang)')).id } });
     expect(at('CCSI', 'J35')).toMatchObject({ status: 'NEW', target: { scope: 'CLUSTER', clusterId: (await cl('Padangsari RW 12 & 13 (Semarang)')).id } });
     expect(at('CCSI', 'J36')).toMatchObject({ status: 'NEW', category: 'PJD' });
     expect(at('ADW', 'C78').status).toBe('DUPLICATE');
@@ -153,14 +154,16 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     for (const cell of ['G145', 'G147', 'G148']) expect(at('EVANTAMA', cell).status).toBe('SKIPPED');
   });
 
-  it('commit: item terimpor; 2 ditahan + SND (pendapatan) di daftar ditahan; duplikat/dilewati tersimpan', async () => {
+  it('commit: item terimpor; daftar ditahan KOSONG (SND jadi PO); duplikat/dilewati tersimpan; referensi tagihan tersimpan', async () => {
     const res = await rabUpload('commit').expect(200);
     expect(res.body.created).toBeGreaterThan(140);
-    expect(res.body).toMatchObject({ held: 2, dismissed: 6 });
+    expect(res.body).toMatchObject({ held: 0, dismissed: 6 });
+    expect(res.body.invoiceRefs).toBeGreaterThan(0);
     expect(res.body.preview.summary).toMatchObject({ NEW: 0, CHANGED: 0 });
     const held = await ctx.api('finance').get('/import/held').expect(200);
-    expect(held.body.map((h: { cell: string }) => h.cell).sort()).toEqual(['C58', 'F32', 'J31']);
-    expect(held.body.find((h: { cell: string }) => h.cell === 'F32')).toMatchObject({ kind: 'REVENUE', amount: '4373496', note: 'PO SND terpisah, belum masuk budget' });
+    expect(held.body).toEqual([]);
+    const released = await ctx.api('finance').get('/import/held?status=RELEASED').expect(200);
+    expect(released.body.find((h: { cell: string }) => h.cell === 'F32')).toMatchObject({ kind: 'REVENUE', amount: '4373496', resolution: 'PO_SND' });
     const dismissed = await ctx.api('finance').get('/import/held?status=DISMISSED').expect(200);
     expect(dismissed.body.filter((h: { resolution: string }) => h.resolution === 'DUPLICATE')).toHaveLength(3);
     const kasbon = await ctx.prisma.expense.findUniqueOrThrow({ where: { sourceRef: 'RAB:CCSI!C57' } });
@@ -213,11 +216,22 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     expect((await realization(kar.id)).row('PERMIT').realisasi).toBe('11964553.71');
   });
 
-  it('budget permit CCSI Manado & termin permit (keputusan 2.2) tercatat dengan alasan', async () => {
+  it('budget permit CCSI Manado & termin permit (keputusan 2.2) + PO SND Kalawiran (2.3) tercatat dengan alasan', async () => {
     const kal = await cl('Kalawiran Kakas Barat (Manado)');
     const kar = await cl('Karondoran Langowan Timur (Manado)');
-    expect(kal.nilaiPoPermit.toString()).toBe('10212800');
+    // nilaiPoPermit Kalawiran = PERMIT 10.212.800 + SND 4.373.496 (turunan dari tabel PO)
+    expect(kal.nilaiPoPermit.toString()).toBe('14586296');
     expect(kal.permitCost.toString()).toBe('10035446.29');
+    const pos = await ctx.api('pm').get(`/clusters/${kal.id}/pos`).expect(200);
+    expect(pos.body.map((p: { kind: string; amount: string; poNumber: string | null; passThroughCost: string }) => [p.kind, p.amount, p.passThroughCost])).toEqual([
+      ['IMPLEMENTASI', kal.nilaiPoImpl.toString(), '0'],
+      ['PERMIT', '10212800', '10035446.29'],
+      ['SND', '4373496', '0'],
+    ]);
+    expect(pos.body[2].poNumber).toBe('FTTHSWI-5-280926');
+    const kt = await ctx.api('finance').get(`/clusters/${kal.id}/client-payments`).expect(200);
+    const sndT = kt.body.payments.filter((p: { kind: string }) => p.kind === 'SND');
+    expect(sndT).toEqual([expect.objectContaining({ termin: 1, amount: '4373496', status: 'INVOICED', invoiceNo: 'INV-RAA/003/IX/2026', invoiceDate: null, needsInvoiceDate: true })]);
     expect(kar.nilaiPoPermit.toString()).toBe('12176000');
     expect(kar.permitCost.toString()).toBe('11964553.71');
     const reason = await ctx.prisma.auditLog.findFirst({ where: { entity: 'Cluster', entityId: kal.id, field: 'alasan' } });
@@ -242,17 +256,35 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     expect(await ctx.prisma.expense.findUnique({ where: { sourceRef: 'RAB:ADW!C79' } })).toBeNull();
   });
 
-  it('CCSI Site Semarang → Padangsari (permit ditahan)', async () => {
+  it('CCSI Site Semarang → Padangsari; permit pass-through 36.000.000 (PO + realisasi J31 + termin UNBILLED tanpa tanggal)', async () => {
     const pad = await cl('Padangsari RW 12 & 13 (Semarang)');
     const r = await realization(pad.id);
     expect(r.row('SUBCON').realisasi).toBe('7445482.00');
     expect(r.row('ALLOWANCE').realisasi).toBe('2812450.00');
-    expect(r.row('PERMIT').realisasi).toBe('0.00');
+    expect(r.row('PERMIT')).toMatchObject({ budget: '36000000.00', realisasi: '36000000.00' });
+    expect(pad.nilaiPoPermit.toString()).toBe('36000000');
+    expect(pad.permitCost.toString()).toBe('36000000');
+    const po = await ctx.prisma.clusterPo.findFirstOrThrow({ where: { clusterId: pad.id, kind: 'PERMIT' } });
+    expect(po.note).toBe('konfirmasi user 14 Okt 2026');
+    const t = await ctx.api('finance').get(`/clusters/${pad.id}/client-payments`).expect(200);
+    expect(t.body.payments.filter((p: { kind: string }) => p.kind === 'PERMIT')).toEqual([
+      expect.objectContaining({ termin: 1, amount: '36000000', status: 'UNBILLED', invoiceDate: null, fromTemplate: false, needsInvoiceDate: true }),
+    ]);
+    const detail = await ctx.api('pm').get(`/clusters/${pad.id}`).expect(200);
+    expect(detail.body.calc.marginPermit).toBe('-4500000.00');
+  });
+
+  it('C58 "Wenda Manado Sulut" = fee marketing → pos Marketing, pro-rata PO Kalawiran & Karondoran', async () => {
+    const e = await ctx.prisma.expense.findUniqueOrThrow({ where: { sourceRef: 'RAB:CCSI!C58' }, include: { allocations: { include: { cluster: true } } } });
+    expect(e).toMatchObject({ category: 'MARKETING_FEE', budgetCode: 'MARKETING', allocationMethod: 'PRO_RATA_PO', note: 'fee marketing — konfirmasi user 14 Okt 2026' });
+    expect(e.amount.toString()).toBe('4000000');
+    expect(e.allocations.map((a) => a.cluster.name).sort()).toEqual(['Kalawiran Kakas Barat (Manado)', 'Karondoran Langowan Timur (Manado)']);
+    expect(moneyStr(sum(e.allocations.map((a) => a.amount.toString())))).toBe('4000000.00');
   });
 
   it('import ulang idempotent: NEW 0, CHANGED 0', async () => {
     const res = await rabUpload('dry-run').expect(200);
-    expect(res.body.summary).toMatchObject({ NEW: 0, CHANGED: 0, NEEDS_MAPPING: 0, HELD: 2, DUPLICATE: 3 });
+    expect(res.body.summary).toMatchObject({ NEW: 0, CHANGED: 0, NEEDS_MAPPING: 0, HELD: 0, DUPLICATE: 3 });
     const again = await rabUpload('commit').expect(200);
     expect(again.body).toMatchObject({ created: 0, updated: 0 });
   });
@@ -282,7 +314,7 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     await rabUpload('commit', { 'RAB:ADW!C69': { scope: 'PROJECT', clusterIds: ngawi.map((c) => c.id), method: 'PRO_RATA_PO', category: 'PJD' } }).expect(200);
   });
 
-  it('duplikat bisa dibatalkan (kembali ditahan) lalu diputuskan lagi; SND pendapatan tidak bisa dilepas jadi biaya', async () => {
+  it('duplikat bisa dibatalkan (kembali ditahan) lalu diputuskan lagi', async () => {
     const dismissed = await ctx.api('finance').get('/import/held?status=DISMISSED').expect(200);
     const c79 = dismissed.body.find((h: { cell: string }) => h.cell === 'C79');
     expect(c79).toMatchObject({ resolution: 'DUPLICATE', amount: '18386500' });
@@ -294,20 +326,7 @@ describe('Import RAB sekali jalan (aturan default 2.1 + keputusan 2.2)', () => {
     dry = await rabUpload('dry-run').expect(200);
     expect(dry.body.items.find((i: PItem) => i.sheet === 'ADW' && i.cell === 'C79').status).toBe('DUPLICATE');
 
-    const held = await ctx.api('finance').get('/import/held').expect(200);
-    const snd = held.body.find((h: { cell: string }) => h.cell === 'F32');
-    await ctx.api('finance').post(`/import/held/${snd.id}/release`, { scope: 'CLUSTER', clusterId: gempol, category: 'OPS' }).expect(409);
-    const c58 = held.body.find((h: { cell: string }) => h.cell === 'C58');
-    await ctx.api('finance').post(`/import/held/${c58.id}/dismiss`, { scope: 'SKIP', note: 'Dikonfirmasi bukan biaya proyek' }).expect(200);
-    dry = await rabUpload('dry-run').expect(200);
-    expect(dry.body.items.find((i: PItem) => i.sheet === 'CCSI' && i.cell === 'C58').status).toBe('SKIPPED');
-    // lepas item ditahan lain tetap bisa (J31 → Padangsari)
-    const j31 = held.body.find((h: { cell: string }) => h.cell === 'J31');
-    const pad = await cl('Padangsari RW 12 & 13 (Semarang)');
-    await ctx.api('finance').post(`/import/held/${j31.id}/release`, { scope: 'CLUSTER', clusterId: pad.id, category: 'PERMIT' }).expect(200);
-    expect((await realization(pad.id)).row('PERMIT').realisasi).toBe('36000000.00');
-    dry = await rabUpload('dry-run').expect(200);
-    expect(dry.body.items.find((i: PItem) => i.sheet === 'CCSI' && i.cell === 'J31').status).toBe('UNCHANGED');
+    expect((await ctx.api('finance').get('/import/held').expect(200)).body).toEqual([]);
   });
 
   it('PM tidak boleh import realisasi', async () => {
@@ -324,7 +343,10 @@ describe('Hitung ulang termin saat nilai PO berubah', () => {
     const t1 = list.body.payments.find((p: { termin: number }) => p.termin === 1);
     await ctx.api('finance').patch(`/client-payments/${t1.id}`, { invoiceDate: '2026-09-01', paidDate: '2026-09-20', paidAmount: t1.amount }).expect(200);
     const original = (await ctx.prisma.cluster.findUniqueOrThrow({ where: { id: cid } })).nilaiPoImpl.toString();
-    await ctx.api('pm').patch(`/clusters/${cid}`, { nilaiPoImpl: '26000000' }).expect(200);
+    // Fase 2.3: nilai PO tidak bisa diedit langsung di cluster — lewat tabel PO
+    await ctx.api('pm').patch(`/clusters/${cid}`, { nilaiPoImpl: '26000000' }).expect(400);
+    const po = await ctx.prisma.clusterPo.findFirstOrThrow({ where: { clusterId: cid, kind: 'IMPLEMENTASI' } });
+    await ctx.api('pm').patch(`/clusters/pos/${po.id}`, { amount: '26000000' }).expect(200);
 
     const prev = await ctx.api('finance').get(`/clusters/${cid}/client-payments/recalculate`).expect(200);
     const impl = prev.body.kinds.find((k: { kind: string }) => k.kind === 'IMPLEMENTASI');
@@ -346,7 +368,7 @@ describe('Hitung ulang termin saat nilai PO berubah', () => {
     expect(moneyStr(sum(after.map((p) => p.amount.toString())))).toBe('26000000.00');
     const logs = await ctx.prisma.auditLog.count({ where: { entity: 'ClientPayment', field: 'sumber', newValue: 'hitung-ulang-termin' } });
     expect(logs).toBeGreaterThan(0);
-    await ctx.api('pm').patch(`/clusters/${cid}`, { nilaiPoImpl: original }).expect(200); // kembalikan untuk spec lain
+    await ctx.api('pm').patch(`/clusters/pos/${po.id}`, { amount: original }).expect(200); // kembalikan untuk spec lain
   });
 
   it('semua termin sudah ditagih → tidak bisa dialokasikan (409)', async () => {
@@ -354,11 +376,12 @@ describe('Hitung ulang termin saat nilai PO berubah', () => {
     const list = await ctx.api('finance').get(`/clusters/${cid}/client-payments`).expect(200);
     for (const p of list.body.payments) await ctx.api('finance').patch(`/client-payments/${p.id}`, { invoiceDate: '2026-09-01' }).expect(200);
     const original = (await ctx.prisma.cluster.findUniqueOrThrow({ where: { id: cid } })).nilaiPoImpl.toString();
-    await ctx.api('pm').patch(`/clusters/${cid}`, { nilaiPoImpl: '12000000' }).expect(200);
+    const po = await ctx.prisma.clusterPo.findFirstOrThrow({ where: { clusterId: cid, kind: 'IMPLEMENTASI' } });
+    await ctx.api('pm').patch(`/clusters/pos/${po.id}`, { amount: '12000000' }).expect(200);
     const prev = await ctx.api('finance').get(`/clusters/${cid}/client-payments/recalculate`).expect(200);
     expect(prev.body.kinds[0].error).toMatch(/Semua termin sudah ditagih/);
     await ctx.api('finance').post(`/clusters/${cid}/client-payments/recalculate`).expect(409);
-    await ctx.api('pm').patch(`/clusters/${cid}`, { nilaiPoImpl: original }).expect(200);
+    await ctx.api('pm').patch(`/clusters/pos/${po.id}`, { amount: original }).expect(200);
   });
 });
 

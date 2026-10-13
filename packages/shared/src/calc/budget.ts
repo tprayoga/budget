@@ -47,6 +47,18 @@ export interface ClusterCalcResult {
   outflow: CalcItem;
   profit: D;
   margin: D;
+  /** Margin permit = nilaiPoPermit − permitCost − pajak atas permit − interest atas permitCost (indikator, tidak mengubah rumus). */
+  marginPermit: D;
+}
+
+/**
+ * Margin permit (indikator Fase 2.3): nilaiPoPermit − permitCost − pajakRate × nilaiPoPermit − interestRate × permitCost.
+ * Permit tetap masuk dasar pajak & interest di rumus utama; indikator ini menunjukkan apakah permit (pass-through) rugi.
+ */
+export function calcPermitMargin(input: { nilaiPoPermit?: Num | null; permitCost?: Num | null; pajakRate: Num; interestRate: Num }): D {
+  const po = dec(input.nilaiPoPermit);
+  const cost = dec(input.permitCost);
+  return po.minus(cost).minus(dec(input.pajakRate).times(po)).minus(dec(input.interestRate).times(cost));
 }
 
 /**
@@ -121,6 +133,7 @@ export function calcCluster(input: ClusterCalcInput): ClusterCalcResult {
     outflow: { amount: outflowAmount, pct: safeDiv(outflowAmount, nilaiProyek) },
     profit,
     margin: safeDiv(profit, nilaiProyek),
+    marginPermit: calcPermitMargin({ nilaiPoPermit, permitCost: permitAmount, pajakRate, interestRate }),
   };
 }
 
@@ -140,6 +153,7 @@ export interface ProjectTotal {
   outflow: D;
   profit: D;
   margin: D;
+  marginPermit: D;
 }
 
 /**
@@ -168,6 +182,7 @@ export function calcProjectTotal(results: ClusterCalcResult[]): ProjectTotal {
     outflow: s((r) => r.outflow.amount),
     profit,
     margin: safeDiv(profit, nilaiProyek),
+    marginPermit: s((r) => r.marginPermit),
   };
 }
 
@@ -187,6 +202,7 @@ export interface CalcSummaryDto {
   outflow: string;
   profit: string;
   margin: string;
+  marginPermit: string;
 }
 
 const m = (v: D) => v.toDecimalPlaces(2, D.ROUND_HALF_UP).toFixed(2);
@@ -213,6 +229,7 @@ export function clusterResultToDto(res: ClusterCalcResult): CalcSummaryDto {
     outflow: m(res.outflow.amount),
     profit: m(res.profit),
     margin: r(res.margin),
+    marginPermit: m(res.marginPermit),
   };
 }
 
@@ -236,5 +253,6 @@ export function projectTotalToDto(t: ProjectTotal): CalcSummaryDto {
     outflow: m(t.outflow),
     profit: m(t.profit),
     margin: r(t.margin),
+    marginPermit: m(t.marginPermit),
   };
 }

@@ -8,6 +8,7 @@ import { BudgetImporter } from '../src/import/budget-importer';
 import { generateClientPayments } from '../src/realization/termin-generator';
 import { seedDefaultRabRules } from '../src/import/default-rab-rules';
 import { applyPatch22 } from '../src/import/patch-2-2';
+import { applyPatch23 } from '../src/import/patch-2-3';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -44,6 +45,7 @@ const DEFAULT_CATEGORY_MAPPING: Record<ExpenseCategory, FrCode | null> = {
   HOMEBASE: 'HOMEBASE',
   MOTOR_MOBIL: 'MOTOR_MOBIL',
   PAJAK: 'PAJAK',
+  MARKETING_FEE: 'MARKETING',
   LAINNYA: null,
 };
 
@@ -136,7 +138,9 @@ async function main() {
       data: {
         projectId: null,
         interestRate: '0.10',
-        retensiAsCost: true,
+        // Fase 2.3: retensi = piutang (bukan biaya) — default resmi
+        retensiAsCost: false,
+        realisasiOverPct: '1',
         rekeningBank: 'BCA',
         rekeningNo: '1234567890',
         rekeningNama: 'PT Indotek Buana Karya',
@@ -169,6 +173,7 @@ async function main() {
 
   // Fase 2: ambang kuning realisasi, mapping kategori, template termin (insert-only)
   await prisma.setting.updateMany({ where: { projectId: null, realisasiWarnPct: null }, data: { realisasiWarnPct: '0.8' } });
+  await prisma.setting.updateMany({ where: { projectId: null, realisasiOverPct: null }, data: { realisasiOverPct: '1' } });
   for (const [category, budgetCode] of Object.entries(DEFAULT_CATEGORY_MAPPING)) {
     const exists = await prisma.categoryMapping.findFirst({ where: { projectId: null, category: category as ExpenseCategory } });
     if (!exists) await prisma.categoryMapping.create({ data: { projectId: null, category: category as ExpenseCategory, budgetCode } });
@@ -246,6 +251,8 @@ async function main() {
   if (rules) console.log(`Aturan pemetaan import RAB default dibuat: ${rules}`);
   const patch = await applyPatch22(prisma, audit, admin?.id ?? null);
   if (patch.length) console.log(`Patch keputusan 2.2: ${patch.join('; ')}`);
+  const patch23 = await applyPatch23(prisma, audit, admin?.id ?? null);
+  if (patch23.length) console.log(`Patch keputusan 2.3: ${patch23.join('; ')}`);
 
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },

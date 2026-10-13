@@ -6,7 +6,8 @@ import { AuditService } from '../audit/audit.service';
 import { rate, s } from '../common/decimal';
 
 /** Nilai awal baris Setting global (default model Setting sesuai spesifikasi). */
-const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: true, realisasiWarnPct: '0.8' } as const;
+/** Fase 2.3: default resmi retensiAsCost = false (retensi = piutang, bukan biaya). */
+export const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: false, realisasiWarnPct: '0.8', realisasiOverPct: '1' } as const;
 
 export interface EffectiveSetting {
   interestRate: string;
@@ -16,11 +17,13 @@ export interface EffectiveSetting {
   rekeningNama: string | null;
   /** Ambang kuning realisasi (rasio). */
   realisasiWarnPct: string;
+  /** Ambang notifikasi over budget (rasio, default 1 = 100%). */
+  realisasiOverPct: string;
   /** Field yang di-override di level project. */
   overridden: (keyof SettingInput)[];
 }
 
-type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama' | 'realisasiWarnPct';
+type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama' | 'realisasiWarnPct' | 'realisasiOverPct';
 
 function dto(row: Setting | null) {
   return row
@@ -33,6 +36,7 @@ function dto(row: Setting | null) {
         rekeningNo: row.rekeningNo,
         rekeningNama: row.rekeningNama,
         realisasiWarnPct: s(row.realisasiWarnPct),
+        realisasiOverPct: s(row.realisasiOverPct),
         updatedAt: row.updatedAt,
       }
     : null;
@@ -84,6 +88,7 @@ export class SettingsService {
       rekeningNo: pick('rekeningNo'),
       rekeningNama: pick('rekeningNama'),
       realisasiWarnPct: (pick('realisasiWarnPct') ?? GLOBAL_DEFAULTS.realisasiWarnPct).toString(),
+      realisasiOverPct: (pick('realisasiOverPct') ?? GLOBAL_DEFAULTS.realisasiOverPct).toString(),
       overridden,
     };
   }
@@ -117,6 +122,7 @@ export class SettingsService {
     if (input.interestRate !== undefined) data.interestRate = input.interestRate === null ? null : rate(input.interestRate);
     if (input.retensiAsCost !== undefined) data.retensiAsCost = input.retensiAsCost;
     if (input.realisasiWarnPct !== undefined) data.realisasiWarnPct = input.realisasiWarnPct === null ? null : rate(input.realisasiWarnPct);
+    if (input.realisasiOverPct !== undefined) data.realisasiOverPct = input.realisasiOverPct === null ? null : rate(input.realisasiOverPct);
     for (const k of ['rekeningBank', 'rekeningNo', 'rekeningNama'] as const) {
       if (input[k] !== undefined) data[k] = input[k] || null;
     }

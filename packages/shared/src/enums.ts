@@ -158,6 +158,7 @@ export const EXPENSE_CATEGORIES = [
   'MOTOR_MOBIL',
   'MATERIAL_PEMBELIAN',
   'PAJAK',
+  'MARKETING_FEE',
   'LAINNYA',
 ] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
@@ -173,6 +174,7 @@ export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   MOTOR_MOBIL: 'Motor & mobil',
   MATERIAL_PEMBELIAN: 'Pembelian material',
   PAJAK: 'Pajak',
+  MARKETING_FEE: 'Fee marketing',
   LAINNYA: 'Lainnya',
 };
 
@@ -195,8 +197,19 @@ export const ALLOCATION_METHOD_LABEL: Record<AllocationMethod, string> = {
   MANUAL: 'Manual',
 };
 
-export const TERMIN_KINDS = ['IMPLEMENTASI', 'PERMIT'] as const;
-export type TerminKind = (typeof TERMIN_KINDS)[number];
+export const PO_KINDS = ['IMPLEMENTASI', 'PERMIT', 'SND', 'ADDWORK', 'DEDUCTION'] as const;
+export type PoKind = (typeof PO_KINDS)[number];
+export const PO_KIND_LABEL: Record<PoKind, string> = {
+  IMPLEMENTASI: 'Implementasi',
+  PERMIT: 'Permit',
+  SND: 'SND',
+  ADDWORK: 'Addwork',
+  DEDUCTION: 'Deduction',
+};
+
+/** Jenis termin klien = jenis PO sumbernya. */
+export const TERMIN_KINDS = PO_KINDS;
+export type TerminKind = PoKind;
 
 export const AGING_TYPES = ['CALENDAR', 'WORKING'] as const;
 export type AgingType = (typeof AGING_TYPES)[number];

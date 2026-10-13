@@ -150,3 +150,29 @@ describe('Pencocokan nama cluster (persis, himpunan kata)', () => {
     expect(clusterNameKey('CCSI - Site Manado')).not.toBe(clusterNameKey('Kalawiran Kakas Barat (Manado)'));
   });
 });
+
+describe('Acuan P (Fase 2.3) — penyesuaian PO ADW baris 10 "Deduction Termin 1 + Addwork"', () => {
+  it('tanda dari rumus baris total; sel konstanta dipecah ADDWORK/DEDUCTION', () => {
+    const adj = sheet('ADW').poAdjustments.map((a) => [a.key, a.kind, a.amount]);
+    expect(adj).toEqual([
+      ['ADW!M10', 'DEDUCTION', '-755900'],
+      ['ADW!Z10', 'DEDUCTION', '-1058900'], // Z11 = Z9-Z10
+      ['ADW!AD10', 'DEDUCTION', '-1081700'],
+      ['ADW!AL10#1', 'ADDWORK', '398300'],
+      ['ADW!AL10#2', 'DEDUCTION', '-730800'],
+      ['ADW!AP10#1', 'ADDWORK', '522700'],
+      ['ADW!AP10#2', 'DEDUCTION', '-736000'],
+      ['ADW!BN10', 'DEDUCTION', '-210000'], // BN11 = BN9-BN10
+    ]);
+    expect(sum(sheet('ADW').poAdjustments.map((a) => a.amount)).toString()).toBe('-3652300');
+  });
+  it('judul blok dari baris 2 (kolom Realisasi)', () => {
+    const a = sheet('ADW').poAdjustments;
+    expect(clusterNameKey(a[0].blockTitle!)).toBe(clusterNameKey('Batumpang Rw 5 & 6 Purwakarta'));
+    expect(a.find((x) => x.key === 'ADW!BN10')!.blockTitle).toMatch(/SUBFEEDER KELURAHAN GUNUNGTAWANG/);
+  });
+  it('sheet tanpa baris penyesuaian → kosong', () => {
+    expect(sheet('EVANTAMA').poAdjustments).toEqual([]);
+    expect(sheet('CCSI').poAdjustments).toEqual([]);
+  });
+});

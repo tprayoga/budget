@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   aggregateFrHistory,
@@ -21,6 +21,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { money, rate } from '../common/decimal';
 import { clusterDto, type ClusterWithLines } from '../budget/budget.mapper';
 import { generateClientPayments } from '../realization/termin-generator';
+import { ensureClusterPos, markOverride, poDto, PO_DERIVED_FIELDS } from './po-support';
 
 const CLUSTER_FIELDS = [
   'name',
@@ -92,8 +93,10 @@ export class ClustersService {
           include: { lines: true, diajukanOleh: { select: { name: true } } },
           orderBy: { createdAt: 'desc' },
         },
+        pos: { orderBy: { createdAt: 'asc' } },
       },
     });
+    const overrides = await this.prisma.fieldOverride.findMany({ where: { entity: 'Cluster', entityId: id }, orderBy: { field: 'asc' } });
     const setting = await this.budget.settingFor(c.projectId);
     const result = this.budget.calc(c, setting);
     const budgetByCode = frBudgetAmounts(result);
@@ -122,6 +125,8 @@ export class ClustersService {
       project: { id: c.project.id, code: c.project.code, name: c.project.name, client: c.project.client },
       setting,
       calc: clusterResultToDto(result),
+      pos: c.pos.map(poDto),
+      overrides: overrides.map((o) => ({ field: o.field, userId: o.userId, reason: o.reason, at: o.at })),
       usage,
       nextTerminKe: hist.terminKe,
       fundRequests: c.fundRequests.map((f) => ({
@@ -170,7 +175,8 @@ export class ClustersService {
         });
         const dto = clusterDto(created);
         await this.audit.diff(tx, user.id, 'Cluster', created.id, null, flatForAudit(dto)!);
-        // termin pembayaran klien otomatis dari template client project
+        // PO awal dari nilai input (IMPLEMENTASI + PERMIT bila ada), lalu termin klien per PO dari template
+        await ensureClusterPos(tx, created.id);
         await generateClientPayments(tx, created.id);
         return dto;
       });
@@ -190,9 +196,12 @@ export class ClustersService {
         if (input.info !== undefined) data.info = input.info ?? null;
         if (input.division !== undefined) data.division = input.division ?? null;
         if (input.status !== undefined) data.status = input.status;
-        if (input.nilaiPoImpl !== undefined) data.nilaiPoImpl = money(input.nilaiPoImpl);
-        if (input.nilaiPoPermit !== undefined) data.nilaiPoPermit = money(input.nilaiPoPermit);
-        if (input.permitCost !== undefined) data.permitCost = money(input.permitCost);
+        // Fase 2.3: nilai PO & biaya permit diturunkan dari tabel PO — edit lewat PO, bukan langsung
+        for (const f of PO_DERIVED_FIELDS) {
+          if (input[f] !== undefined && !before[f].eq(input[f]!)) {
+            throw new BadRequestException('Nilai PO / biaya permit diturunkan dari tabel PO cluster — ubah lewat tabel PO');
+          }
+        }
         if (input.pajakRate !== undefined) data.pajakRate = rate(input.pajakRate);
         if (input.retensiRate !== undefined) data.retensiRate = rate(input.retensiRate);
         if (input.implementationDate !== undefined) {
@@ -202,7 +211,12 @@ export class ClustersService {
         await this.upsertLines(tx, id, input.lines ?? []);
         const after = (await this.load(id, tx))!;
         const dto = clusterDto(after);
-        await this.audit.diff(tx, user.id, 'Cluster', id, flatForAudit(clusterDto(before)), flatForAudit(dto)!);
+        const flatBefore = flatForAudit(clusterDto(before))!;
+        const flatAfter = flatForAudit(dto)!;
+        await this.audit.diff(tx, user.id, 'Cluster', id, flatBefore, flatAfter);
+        // tandai field yang diedit di aplikasi → dilindungi dari import budget Excel
+        const changed = Object.keys(flatAfter).filter((k) => flatAfter[k] !== flatBefore[k]);
+        await markOverride(tx, id, changed, user.id);
         return dto;
       });
     } catch (e) {

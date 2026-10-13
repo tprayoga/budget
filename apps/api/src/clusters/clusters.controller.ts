@@ -6,6 +6,10 @@ import {
   clusterCreateSchema,
   clusterDuplicateSchema,
   clusterUpdateSchema,
+  clusterPoSchema,
+  clusterPoUpdateSchema,
+  type ClusterPoInput,
+  type ClusterPoUpdateInput,
   type BudgetLineDto,
   type ClusterCreateInput,
   type ClusterUpdateInput,
@@ -14,6 +18,7 @@ import { CurrentUser, EDITOR_ROLES, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { ApiZodBody, ZBody } from '../common/zod';
 import { ClustersService } from './clusters.service';
+import { ClusterPosService } from './cluster-pos.service';
 
 const linesSchema = z.array(budgetLineSchema);
 
@@ -21,7 +26,35 @@ const linesSchema = z.array(budgetLineSchema);
 @ApiCookieAuth()
 @Controller('clusters')
 export class ClustersController {
-  constructor(private readonly clusters: ClustersService) {}
+  constructor(
+    private readonly clusters: ClustersService,
+    private readonly pos: ClusterPosService,
+  ) {}
+
+  @Get(':id/pos')
+  listPos(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.pos.list(user, id);
+  }
+
+  @Post(':id/pos')
+  @Roles(...EDITOR_ROLES)
+  @ApiZodBody(clusterPoSchema)
+  createPo(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(clusterPoSchema) body: ClusterPoInput) {
+    return this.pos.create(user, id, body);
+  }
+
+  @Patch('pos/:poId')
+  @Roles(...EDITOR_ROLES)
+  @ApiZodBody(clusterPoUpdateSchema)
+  updatePo(@CurrentUser() user: AuthUser, @Param('poId') poId: string, @ZBody(clusterPoUpdateSchema) body: ClusterPoUpdateInput) {
+    return this.pos.update(user, poId, body);
+  }
+
+  @Delete('pos/:poId')
+  @Roles(...EDITOR_ROLES)
+  removePo(@CurrentUser() user: AuthUser, @Param('poId') poId: string) {
+    return this.pos.remove(user, poId);
+  }
 
   @Get()
   @ApiQuery({ name: 'projectId', required: false })

@@ -4,6 +4,7 @@ import { parseImplementationDate } from '@indotek/shared/xlsx';
 import type { AuditService } from '../audit/audit.service';
 import { money } from '../common/decimal';
 import { saveRule } from './rab-importer';
+import { ensureClusterPos, poRef, syncDerivedFromPos } from '../clusters/po-support';
 
 export const PATCH_22 = '2.2-keputusan-import';
 const REASON_PERMIT = 'permit pass-through dari sheet CCSI';
@@ -68,7 +69,14 @@ export async function applyPatch22(prisma: PrismaClient, audit: AuditService, us
           continue;
         }
         const cost = lines.find((l) => l.clusterId === c.id)!.amount;
-        await tx.cluster.update({ where: { id: c.id }, data: { nilaiPoPermit: money(po), permitCost: money(cost) } });
+        // Fase 2.3: nilai permit = PO PERMIT (nilai cluster diturunkan dari tabel PO)
+        await ensureClusterPos(tx, c.id);
+        const permitPo = await tx.clusterPo.upsert({
+          where: { sourceRef: poRef(c.id, 'PERMIT') },
+          create: { clusterId: c.id, kind: 'PERMIT', amount: money(po), passThroughCost: money(cost), sourceRef: poRef(c.id, 'PERMIT'), note: REASON_PERMIT },
+          update: { amount: money(po), passThroughCost: money(cost), note: REASON_PERMIT },
+        });
+        await syncDerivedFromPos(tx, c.id);
         await audit.diff(
           tx,
           userId,
@@ -81,10 +89,10 @@ export async function applyPatch22(prisma: PrismaClient, audit: AuditService, us
 
         // 3) termin klien permit (manual, CCSI belum punya template): 1 termin 100%, sudah ditagih & belum dibayar
         const invoiceNo = c.id === kal.id ? PERMIT_INVOICE.kal : PERMIT_INVOICE.kar;
-        const exists = await tx.clientPayment.findUnique({ where: { clusterId_kind_termin: { clusterId: c.id, kind: 'PERMIT', termin: 1 } } });
+        const exists = await tx.clientPayment.findUnique({ where: { poId_termin: { poId: permitPo.id, termin: 1 } } });
         if (!exists) {
           const p = await tx.clientPayment.create({
-            data: { clusterId: c.id, kind: 'PERMIT', termin: 1, pct: '1', amount: money(po), invoiceNo, status: 'INVOICED', keterangan: 'Permit 100% (sheet CCSI: Unpaid)' },
+            data: { clusterId: c.id, poId: permitPo.id, fromTemplate: false, kind: 'PERMIT', termin: 1, pct: '1', amount: money(po), invoiceNo, status: 'INVOICED', keterangan: 'Permit 100% (sheet CCSI: Unpaid)' },
           });
           await audit.diff(tx, userId, 'ClientPayment', p.id, null, { kind: 'PERMIT', termin: '1', amount: po, invoiceNo, status: 'INVOICED', alasan: REASON_PERMIT });
         }

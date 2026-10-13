@@ -185,6 +185,8 @@ model Setting {
   rekeningNama  String?
   /// Ambang kuning realisasi (% terpakai), mis. 0.8 = 80%
   realisasiWarnPct Decimal? @db.Decimal(16, 12)
+  /// Ambang notifikasi over budget (rasio, 1 = 100%)
+  realisasiOverPct Decimal? @db.Decimal(16, 12)
   updatedAt     DateTime @updatedAt
   project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -236,6 +238,8 @@ model Cluster {
   expenses     Expense[]
   allocations  ExpenseAllocation[]
   clientPayments ClientPayment[]
+  pos          ClusterPo[]
+  invoiceRefs  ClientInvoiceRef[]
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -397,6 +401,7 @@ enum ExpenseCategory {
   MOTOR_MOBIL
   MATERIAL_PEMBELIAN
   PAJAK
+  MARKETING_FEE
   LAINNYA
 }
 
@@ -420,9 +425,21 @@ enum AllocationMethod {
   MANUAL
 }
 
+/// Jenis termin klien = jenis PO sumbernya (template hanya untuk IMPLEMENTASI & PERMIT).
 enum TerminKind {
   IMPLEMENTASI
   PERMIT
+  SND
+  ADDWORK
+  DEDUCTION
+}
+
+enum PoKind {
+  IMPLEMENTASI
+  PERMIT
+  SND
+  ADDWORK
+  DEDUCTION
 }
 
 enum AgingType {
@@ -537,6 +554,10 @@ model TerminTemplateLine {
 model ClientPayment {
   id          String              @id @default(cuid())
   clusterId   String
+  /// PO sumber termin (termin digenerate per PO)
+  poId        String?
+  /// false = termin manual (tanpa template) → tanggal invoice perlu dilengkapi
+  fromTemplate Boolean            @default(true)
   kind        TerminKind
   termin      Int
   pct         Decimal?            @db.Decimal(16, 12)
@@ -551,8 +572,11 @@ model ClientPayment {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   cluster     Cluster             @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  po          ClusterPo?          @relation(fields: [poId], references: [id], onDelete: Cascade)
+  invoiceRefs ClientInvoiceRef[]
 
-  @@unique([clusterId, kind, termin])
+  @@unique([poId, termin])
+  @@index([clusterId, kind])
 }
 
 model HariLibur {
@@ -655,4 +679,84 @@ model DataPatch {
   name      String   @unique
   note      String?
   appliedAt DateTime @default(now())
+}
+
+// =====================================================================================
+// Fase 2.3 — PO per cluster, proteksi import, notifikasi, referensi tagihan
+// =====================================================================================
+
+/// PO per cluster. nilaiPoImpl = Σ IMPLEMENTASI + ADDWORK + DEDUCTION; nilaiPoPermit = Σ PERMIT + SND;
+/// permitCost = Σ passThroughCost. Ketiga kolom di Cluster menjadi nilai turunan (cache) dari tabel ini.
+model ClusterPo {
+  id              String          @id @default(cuid())
+  clusterId       String
+  kind            PoKind
+  poNumber        String?
+  poDate          DateTime?       @db.Date
+  /// DEDUCTION bernilai negatif
+  amount          Decimal         @db.Decimal(18, 2)
+  passThroughCost Decimal         @default(0) @db.Decimal(18, 2)
+  note            String?
+  /// Kunci idempotensi import (mis. RAB:ADW!AL10#1, MIGRASI:{clusterId}:IMPLEMENTASI)
+  sourceRef       String?         @unique
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  cluster         Cluster         @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  termins         ClientPayment[]
+
+  @@index([clusterId])
+}
+
+/// Field yang diubah lewat aplikasi (dilindungi dari import budget Excel).
+model FieldOverride {
+  id       String   @id @default(cuid())
+  entity   String
+  entityId String
+  /// mis. nilaiPoImpl, pajakRate, line.SUBCON.amount
+  field    String
+  userId   String?
+  reason   String?
+  at       DateTime @default(now())
+
+  @@unique([entity, entityId, field])
+}
+
+/// Notifikasi in-app (mis. pos/cluster melewati ambang budget). `key` mencegah notifikasi ganda.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  key       String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([userId, key])
+  @@index([userId, readAt])
+}
+
+/// Referensi tagihan klien dari file RAB (no. invoice, nilai net, jatuh tempo, Paid/Unpaid). Tidak diterapkan otomatis.
+model ClientInvoiceRef {
+  id              String         @id @default(cuid())
+  sourceRef       String         @unique
+  projectId       String
+  clusterId       String?
+  blockTitle      String?
+  termin          Int?
+  invoiceNo       String
+  netAmount       Decimal?       @db.Decimal(18, 2)
+  dueDate         DateTime?      @db.Date
+  statusText      String?
+  paid            Boolean        @default(false)
+  appliedPaymentId String?
+  appliedAt       DateTime?
+  appliedById     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  cluster         Cluster?       @relation(fields: [clusterId], references: [id])
+  appliedPayment  ClientPayment? @relation(fields: [appliedPaymentId], references: [id])
+
+  @@index([projectId])
 }

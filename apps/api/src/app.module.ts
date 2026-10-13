@@ -13,6 +13,7 @@ import { RealizationModule } from './realization/realization.module';
 import { MasterModule } from './projects/master.module';
 import { SettingsModule } from './settings/settings.module';
 import { StorageModule } from './storage/storage.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { HealthController } from './health.controller';
 
 @Module({
@@ -31,6 +32,7 @@ import { HealthController } from './health.controller';
     FundRequestsModule,
     ImportModule,
     ExportModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
 })

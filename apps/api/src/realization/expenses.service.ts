@@ -7,6 +7,7 @@ import { AccessService } from '../access/access.service';
 import { StorageService, type UploadedFile } from '../storage/storage.service';
 import type { AuthUser } from '../auth/auth.types';
 import { money, s } from '../common/decimal';
+import { scanOverruns } from '../notifications/overrun';
 import { ExpenseSupportService } from './expense-support.service';
 
 export const EXPENSE_INCLUDE = {
@@ -199,7 +200,17 @@ export class ExpensesService {
       await this.audit.diff(tx, user.id, 'Expense', e.id, null, flatExpense(after)!);
       return e.id;
     });
+    await this.rescan(id);
     return this.get(user, id);
+  }
+
+  /** Cek ambang over budget untuk cluster yang terdampak expense (notifikasi PM & DIREKTUR). */
+  private async rescan(expenseId: string | null, clusterIds: string[] = []) {
+    const ids = new Set(clusterIds);
+    if (expenseId) {
+      for (const a of await this.prisma.expenseAllocation.findMany({ where: { expenseId }, select: { clusterId: true } })) ids.add(a.clusterId);
+    }
+    if (ids.size) await scanOverruns(this.prisma, [...ids]);
   }
 
   /** Hak ubah: FINANCE/ADMIN semua; PM hanya miliknya yang belum diverifikasi. Expense CLIENT_PAYMENT terkunci. */
@@ -268,7 +279,8 @@ export class ExpensesService {
       });
       const after = await tx.expense.findUniqueOrThrow({ where: { id }, include: { allocations: true } });
       await this.audit.diff(tx, user.id, 'Expense', id, flatExpense(before), flatExpense(after)!);
-    });
+      return before.allocations.map((a) => a.clusterId);
+    }).then((prev) => this.rescan(id, prev));
     return this.get(user, id);
   }
 
@@ -297,6 +309,7 @@ export class ExpensesService {
       const after = await tx.expense.findUniqueOrThrow({ where: { id }, include: { allocations: true } });
       await this.audit.diff(tx, user.id, 'Expense', id, flatExpense(before), { ...flatExpense(after)!, rejectNote: note });
     });
+    await this.rescan(id);
     return this.get(user, id);
   }
 
@@ -306,9 +319,10 @@ export class ExpensesService {
       this.assertEditable(user, before);
       await tx.expense.delete({ where: { id } });
       await this.audit.diff(tx, user.id, 'Expense', id, flatExpense(before), { status: 'DIHAPUS' });
-      return before.attachmentUrl;
+      return { url: before.attachmentUrl, clusterIds: before.allocations.map((a) => a.clusterId) };
     });
-    if (file) await this.storage.remove(file);
+    await this.rescan(null, file.clusterIds);
+    if (file.url) await this.storage.remove(file.url);
     return { ok: true };
   }
 

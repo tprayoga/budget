@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ImportHeldItem } from '@prisma/client';
 import type { HeldReleaseInput } from '@indotek/shared';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, type Tx } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AccessService } from '../access/access.service';
 import { ExpenseSupportService } from '../realization/expense-support.service';
@@ -9,6 +9,57 @@ import { flatExpense } from '../realization/expenses.service';
 import type { AuthUser } from '../auth/auth.types';
 import { s } from '../common/decimal';
 import { descOf, saveRule } from './rab-importer';
+import { scanOverruns } from '../notifications/overrun';
+
+/**
+ * Lepas item ditahan (biaya) → expense TERVERIFIKASI dengan sourceRef yang sama + aturan item diperbarui,
+ * sehingga import RAB berikutnya menganggap item ini UNCHANGED. Dipakai endpoint lepas & patch keputusan.
+ */
+export async function releaseHeldExpense(
+  tx: Tx,
+  audit: AuditService,
+  support: ExpenseSupportService,
+  h: ImportHeldItem,
+  input: HeldReleaseInput,
+  userId: string | null,
+) {
+  const alloc = await support.computeGroup(
+    [h.amount.toString()],
+    input.scope === 'CLUSTER'
+      ? { projectId: h.projectId, clusterId: input.clusterId }
+      : { projectId: h.projectId, clusterIds: input.clusterIds, method: input.method, manualPcts: input.manualPcts },
+    tx,
+  );
+  const budgetCode = await support.resolveBudgetCode(h.projectId, input.category, null, tx);
+  const note = input.note ?? null;
+  const e = await tx.expense.create({
+    data: {
+      projectId: h.projectId,
+      clusterId: input.scope === 'CLUSTER' ? input.clusterId! : null,
+      date: h.date,
+      periodLabel: h.periodLabel,
+      category: input.category,
+      budgetCode,
+      description: descOf(h),
+      amount: h.amount,
+      note,
+      allocationMethod: input.scope === 'PROJECT' ? alloc.method : null,
+      status: 'TERVERIFIKASI',
+      source: 'IMPORT_RAB',
+      sourceRef: h.sourceRef,
+      createdById: userId,
+      verifiedById: userId,
+      verifiedAt: new Date(),
+    },
+  });
+  await support.writeAllocations(tx, e.id, alloc.lines[0]);
+  await saveRule(tx, audit, h.sourceRef, h.projectId, { ...input, note }, userId);
+  await tx.importHeldItem.update({ where: { id: h.id }, data: { status: 'RELEASED', expenseId: e.id, resolvedById: userId, resolvedAt: new Date() } });
+  const after = await tx.expense.findUniqueOrThrow({ where: { id: e.id }, include: { allocations: true } });
+  await audit.diff(tx, userId, 'Expense', e.id, null, { ...flatExpense(after)!, source: `lepas-ditahan:${h.sourceRef}` });
+  await audit.diff(tx, userId, 'ImportHeldItem', h.id, { status: 'HELD' }, { status: 'RELEASED' });
+  return e;
+}
 
 function dto(h: ImportHeldItem & { project?: { code: string } }) {
   return {
@@ -85,44 +136,8 @@ export class HeldItemsService {
   async release(user: AuthUser, id: string, input: HeldReleaseInput) {
     const h = await this.loadHeld(user, id);
     if (h.kind !== 'EXPENSE') throw new ConflictException('Item ini pendapatan/PO, bukan biaya — tindak lanjut manual di budget / termin klien');
-    await this.prisma.$transaction(async (tx) => {
-      const alloc = await this.support.computeGroup(
-        [h.amount.toString()],
-        input.scope === 'CLUSTER'
-          ? { projectId: h.projectId, clusterId: input.clusterId }
-          : { projectId: h.projectId, clusterIds: input.clusterIds, method: input.method, manualPcts: input.manualPcts },
-        tx,
-      );
-      const budgetCode = await this.support.resolveBudgetCode(h.projectId, input.category, null, tx);
-      const note = input.note ?? null;
-      const e = await tx.expense.create({
-        data: {
-          projectId: h.projectId,
-          clusterId: input.scope === 'CLUSTER' ? input.clusterId! : null,
-          date: h.date,
-          periodLabel: h.periodLabel,
-          category: input.category,
-          budgetCode,
-          description: descOf(h),
-          amount: h.amount,
-          note,
-          allocationMethod: input.scope === 'PROJECT' ? alloc.method : null,
-          status: 'TERVERIFIKASI',
-          source: 'IMPORT_RAB',
-          sourceRef: h.sourceRef,
-          createdById: user.id,
-          verifiedById: user.id,
-          verifiedAt: new Date(),
-        },
-      });
-      await this.support.writeAllocations(tx, e.id, alloc.lines[0]);
-      // aturan item diperbarui → import berikutnya menganggap item ini UNCHANGED
-      await saveRule(tx, this.audit, h.sourceRef, h.projectId, { ...input, note }, user.id);
-      await tx.importHeldItem.update({ where: { id }, data: { status: 'RELEASED', expenseId: e.id, resolvedById: user.id, resolvedAt: new Date() } });
-      const after = await tx.expense.findUniqueOrThrow({ where: { id: e.id }, include: { allocations: true } });
-      await this.audit.diff(tx, user.id, 'Expense', e.id, null, { ...flatExpense(after)!, source: `lepas-ditahan:${h.sourceRef}` });
-      await this.audit.diff(tx, user.id, 'ImportHeldItem', id, { status: 'HELD' }, { status: 'RELEASED' });
-    });
+    await this.prisma.$transaction((tx) => releaseHeldExpense(tx, this.audit, this.support, h, input, user.id));
+    await scanOverruns(this.prisma, (await this.prisma.cluster.findMany({ where: { projectId: h.projectId }, select: { id: true } })).map((c) => c.id));
     return dto((await this.prisma.importHeldItem.findUniqueOrThrow({ where: { id } })));
   }
 

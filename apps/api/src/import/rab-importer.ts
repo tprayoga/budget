@@ -1,7 +1,8 @@
 import type { AllocationMethod, Cluster, ExpenseCategory, ImportMappingRule, Prisma, PrismaClient } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import { dec, type RabDecision } from '@indotek/shared';
-import { clusterNameKey, parseRabWorkbook, type ParsedRab, type RabExpenseItem } from '@indotek/shared/xlsx';
+import { clusterNameKey, parseRabWorkbook, type ParsedRab, type RabExpenseItem, type RabInvoice } from '@indotek/shared/xlsx';
+import { scanOverruns } from '../notifications/overrun';
 import type { AuditService } from '../audit/audit.service';
 import type { ExpenseSupportService } from '../realization/expense-support.service';
 import { flatExpense } from '../realization/expenses.service';
@@ -228,6 +229,7 @@ export class RabImporter {
     let updated = 0;
     let held = 0;
     let dismissed = 0;
+    let invoiceRefs = 0;
     // grup alokasi: semua item siap dalam satu mappingKey + target yang sama dialokasikan kumulatif
     const groups = new Map<string, RabPreviewItem[]>();
     for (const i of preview.items) {
@@ -334,10 +336,58 @@ export class RabImporter {
           if (status === 'HELD') held++;
           else dismissed++;
         }
+
+        // referensi tagihan klien (no. invoice, net, jatuh tempo, Paid/Unpaid) — hanya disimpan, diterapkan manual oleh FINANCE
+        for (const sh of preview.sheets) {
+          if (!sh.projectId) continue;
+          invoiceRefs += await this.syncInvoiceRefs(tx, sh.projectId, sh.sheetName, sh.invoices);
+        }
       },
       { timeout: 180_000 },
     );
-    return { created, updated, held, dismissed, preview: await this.preview(parsed, allowedProjectIds) };
+    const projectIds = [...new Set(preview.sheets.map((x) => x.projectId).filter((x): x is string => !!x))];
+    const clusterIds = (await this.prisma.cluster.findMany({ where: { projectId: { in: projectIds } }, select: { id: true } })).map((c) => c.id);
+    if (clusterIds.length) await scanOverruns(this.prisma, clusterIds);
+    return { created, updated, held, dismissed, invoiceRefs, preview: await this.preview(parsed, allowedProjectIds) };
+  }
+
+  /**
+   * Simpan referensi tagihan dari RAB. Cluster dicocokkan lewat aturan blok (scope CLUSTER) atau nama blok;
+   * bila tidak cocok, referensi berlaku di tingkat project. Referensi yang sudah diterapkan tidak diubah.
+   */
+  private async syncInvoiceRefs(tx: Prisma.TransactionClient, projectId: string, sheet: string, invoices: RabInvoice[]) {
+    const clusters = await tx.cluster.findMany({ where: { projectId } });
+    const byKey = new Map<string, Cluster[]>();
+    for (const c of clusters) byKey.set(clusterNameKey(c.name), [...(byKey.get(clusterNameKey(c.name)) ?? []), c]);
+    let n = 0;
+    for (const inv of invoices) {
+      let clusterId: string | null = null;
+      if (inv.blockTitle) {
+        const rule = await tx.importMappingRule.findUnique({ where: { sourceKey: `RAB:${sheet}:BLOCK:${inv.blockTitle}` } });
+        if (rule?.scope === 'CLUSTER' && rule.clusterId) clusterId = rule.clusterId;
+        else {
+          const hit = byKey.get(clusterNameKey(inv.blockTitle));
+          if (hit?.length === 1) clusterId = hit[0].id;
+        }
+      }
+      const sourceRef = `RAB:${inv.key}`;
+      const data = {
+        projectId,
+        clusterId,
+        blockTitle: inv.blockTitle,
+        termin: inv.termin,
+        invoiceNo: inv.invoiceNo,
+        netAmount: inv.amount ? money(inv.amount) : null,
+        dueDate: inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`) : null,
+        statusText: inv.statusText,
+        paid: inv.paid,
+      };
+      const prev = await tx.clientInvoiceRef.findUnique({ where: { sourceRef } });
+      if (prev?.appliedPaymentId) continue;
+      await tx.clientInvoiceRef.upsert({ where: { sourceRef }, create: { sourceRef, ...data }, update: data });
+      n++;
+    }
+    return n;
   }
 }
 

@@ -18,8 +18,8 @@ afterAll(async () => {
 const within1 = (actual: string, expected: string) => expect(dec(actual).minus(expected).abs().lte(1)).toBe(true);
 
 describe('Acceptance C — total project setelah seed/import (lewat DB)', () => {
-  it('rekap ADW / EVANTAMA / CCSI', async () => {
-    const res = await ctx.api('admin').get('/budget/rekap').expect(200);
+  it('rekap ADW / EVANTAMA / CCSI (acuan C dengan retensiAsCost=true eksplisit)', async () => {
+    const res = await ctx.api('admin').get('/budget/rekap?retensiAsCost=true').expect(200);
     const byCode = Object.fromEntries(res.body.projects.map((p: { project: { code: string } }) => [p.project.code, p]));
     expect(byCode.ADW.clusters).toHaveLength(30);
     within1(byCode.ADW.total.nilaiProyek, '716165700');
@@ -28,13 +28,28 @@ describe('Acceptance C — total project setelah seed/import (lewat DB)', () => 
     within1(byCode.EVANTAMA.total.profit, '-12759106');
     // CCSI = acuan C + permit Manado (keputusan 2.2): nilaiPoPermit +22.388.800, permitCost +22.000.000,
     // pajak 2,5% × 22.388.800 = 559.720, interest 10% × (22.000.000 + 559.720) = 2.255.972 → profit −2.426.892
-    within1(byCode.CCSI.total.nilaiProyek, '158462159');
-    within1(byCode.CCSI.total.profit, '-4298845');
+    // + Fase 2.3: SND Kalawiran 4.373.496 → profit +4.373.496 × (1 − 2,5% − 0,25%) = +4.253.224,86
+    //             permit Semarang 36.000.000 pass-through → profit −(900.000 + 3.690.000) = −4.590.000
+    within1(byCode.CCSI.total.nilaiProyek, '198835655');
+    within1(byCode.CCSI.total.profit, '-4635620.14');
+    // margin permit (indikator): Semarang 36.000.000 − 36.000.000 − 900.000 − 3.600.000 = −4.500.000
+    const sem = byCode.CCSI.clusters.find((c: { name: string }) => c.name.includes('Semarang'));
+    expect(sem.calc.marginPermit).toBe('-4500000.00');
+  });
+
+  it('default baru retensiAsCost = false (retensi = piutang)', async () => {
+    const global = await ctx.api('direktur').get('/settings/global').expect(200);
+    expect(global.body.retensiAsCost).toBe(false);
+    const res = await ctx.api('admin').get('/budget/rekap').expect(200);
+    const adw = res.body.projects.find((p: { project: { code: string } }) => p.project.code === 'ADW');
+    const w = adw.clusters.find((c: { name: string }) => c.name === 'WANASARI RW 01 SUBANG');
+    expect(w.calc.profit).toBe('961865.20');
+    expect(res.body.overBudget).toEqual(expect.any(Array));
   });
 
   it('Acceptance A & D lewat GET /projects/:id/budget', async () => {
     const adw = await ctx.prisma.project.findUniqueOrThrow({ where: { code: 'ADW' } });
-    const res = await ctx.api('pm').get(`/projects/${adw.id}/budget`).expect(200);
+    const res = await ctx.api('pm').get(`/projects/${adw.id}/budget?retensiAsCost=true`).expect(200);
     const w = res.body.clusters.find((c: { name: string }) => c.name === 'WANASARI RW 01 SUBANG');
     expect(w.calc).toMatchObject({
       danaInvestor: '8652253.00',
@@ -51,13 +66,15 @@ describe('Acceptance C — total project setelah seed/import (lewat DB)', () => 
     expect(sinagar.calc.pajak.amount).toBe('3867427.94');
   });
 
-  it('Acceptance B — preview what-if retensiAsCost=false tanpa menyimpan', async () => {
+  it('Acceptance B — default (retensi = piutang) vs preview what-if retensiAsCost=true tanpa menyimpan', async () => {
     const adw = await ctx.prisma.project.findUniqueOrThrow({ where: { code: 'ADW' } });
-    const res = await ctx.api('direktur').get(`/projects/${adw.id}/budget?retensiAsCost=false`).expect(200);
+    const res = await ctx.api('direktur').get(`/projects/${adw.id}/budget`).expect(200);
     const w = res.body.clusters.find((c: { name: string }) => c.name === 'WANASARI RW 01 SUBANG');
     expect(w.calc).toMatchObject({ danaInvestor: '7708168.00', interest: '770816.80', profit: '961865.20' });
+    const what = await ctx.api('direktur').get(`/projects/${adw.id}/budget?retensiAsCost=true`).expect(200);
+    expect(what.body.clusters.find((c: { name: string }) => c.name === 'WANASARI RW 01 SUBANG').calc.profit).toBe('-76628.30');
     const global = await ctx.api('direktur').get('/settings/global').expect(200);
-    expect(global.body.retensiAsCost).toBe(true);
+    expect(global.body.retensiAsCost).toBe(false);
   });
 });
 
@@ -133,7 +150,7 @@ describe('Cluster — CRUD, template default, duplicate, audit', () => {
 });
 
 describe('Import & export Excel', () => {
-  it('dry-run file contoh setelah seed → UNCHANGED, kecuali permit CCSI Manado (keputusan 2.2)', async () => {
+  it('dry-run file contoh setelah seed → UNCHANGED; permit Manado & Semarang (diedit di aplikasi) = PROTECTED', async () => {
     const { srv, auth } = ctx.api('pm').raw();
     const res = await srv
       .post('/api/import/budget-xlsx?mode=dry-run')
@@ -142,10 +159,14 @@ describe('Import & export Excel', () => {
       .expect(200);
     type C = { name: string; status: string; diffs: { field: string }[] };
     const rows = (res.body.clusters as C[]).filter((c) => !c.name.startsWith('Cluster Uji'));
-    const manado = rows.filter((c) => c.name.includes('(Manado)'));
-    expect(manado.map((c) => c.status)).toEqual(['CHANGED', 'CHANGED']);
-    for (const c of manado) expect(c.diffs.map((d) => d.field).sort()).toEqual(['nilaiPoPermit', 'permitCost']);
-    expect(new Set(rows.filter((c) => !c.name.includes('(Manado)')).map((c) => c.status))).toEqual(new Set(['UNCHANGED']));
+    type D = { field: string; protected?: boolean; protectedReason?: string };
+    const prot = rows.filter((c) => /\((Manado|Semarang)\)/.test(c.name));
+    expect(prot.map((c) => c.status)).toEqual(['PROTECTED', 'PROTECTED', 'PROTECTED']);
+    for (const c of prot) {
+      expect(c.diffs.map((d) => d.field).sort()).toEqual(['nilaiPoPermit', 'permitCost']);
+      for (const d of c.diffs as D[]) expect(d).toMatchObject({ protected: true, protectedReason: 'dilindungi — diedit di aplikasi' });
+    }
+    expect(new Set(rows.filter((c) => !prot.includes(c)).map((c) => c.status))).toEqual(new Set(['UNCHANGED']));
     expect(res.body.sheets.map((s: { projectCode: string }) => s.projectCode)).toEqual(['ADW', 'EVANTAMA', 'CCSI']);
   });
 
@@ -157,8 +178,7 @@ describe('Import & export Excel', () => {
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const { srv, auth } = ctx.api('pm').raw();
     const dry = await srv.post('/api/import/budget-xlsx').set(auth).attach('file', buf, 'b.xlsx').expect(200);
-    // cluster Manado tetap CHANGED karena permit (keputusan 2.2) — di luar uji ini
-    const changed = dry.body.clusters.filter((c: { status: string; name: string }) => c.status === 'CHANGED' && !c.name.includes('(Manado)'));
+    const changed = dry.body.clusters.filter((c: { status: string; name: string }) => c.status === 'CHANGED');
     expect(changed).toHaveLength(1);
     expect(changed[0].diffs).toEqual([{ field: 'nilaiPoImpl', oldValue: expect.any(String), newValue: '50000000' }]);
     const commit = await srv
@@ -194,7 +214,7 @@ describe('Import & export Excel', () => {
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Rekap', 'ADW', 'CCSI', 'EVANTAMA']);
     const parsed = parseBudgetWorkbook(wb);
     expect(parsed.interestRate).toBe('0.1');
-    expect(parsed.retensiAsCost).toBe(true);
+    expect(parsed.retensiAsCost).toBe(false);
     const dry = await srv.post('/api/import/budget-xlsx').set(auth).attach('file', exp.body, 'export.xlsx').expect(200);
     const notUnchanged = dry.body.clusters.filter((c: { status: string }) => c.status !== 'UNCHANGED');
     expect(notUnchanged).toEqual([]);

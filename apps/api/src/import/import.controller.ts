@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Body,
   Controller,
   Get,
@@ -17,9 +18,10 @@ import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
 import { CurrentUser, EDITOR_ROLES, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
-import { BudgetImporter } from './budget-importer';
+import { BudgetImporter, type ImportForce } from './budget-importer';
 import { LedgerImporter } from './ledger-importer';
 import { RabImporter } from './rab-importer';
+import { PoAdjustImporter } from './po-adjust-importer';
 import { ExpenseSupportService } from '../realization/expense-support.service';
 import { heldDismissSchema, heldReleaseSchema, rabCommitSchema, type HeldReleaseInput } from '@indotek/shared';
 import { HeldItemsService } from './held-items.service';
@@ -34,6 +36,7 @@ export class ImportController {
   private readonly importer: BudgetImporter;
   private readonly rab: RabImporter;
   private readonly ledger: LedgerImporter;
+  private readonly poAdjust: PoAdjustImporter;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -46,6 +49,7 @@ export class ImportController {
     this.importer = new BudgetImporter(prisma, audit, settings);
     this.rab = new RabImporter(prisma, audit, support);
     this.ledger = new LedgerImporter(prisma, audit);
+    this.poAdjust = new PoAdjustImporter(prisma, audit);
   }
 
   /**
@@ -63,6 +67,8 @@ export class ImportController {
     @Query('mode') mode = 'dry-run',
     @UploadedFile() file?: { buffer: Buffer; originalname: string },
     @Body('keys') keysRaw?: string,
+    @Body('force') forceRaw?: string,
+    @Body('reason') reason?: string,
   ) {
     if (!file) throw new BadRequestException('File .xlsx wajib diunggah (field "file")');
     if (!/\.xlsx$/i.test(file.originalname)) throw new BadRequestException('Hanya file .xlsx');
@@ -77,9 +83,25 @@ export class ImportController {
     }
     if (mode === 'commit') {
       const keys = this.parseKeys(keysRaw);
-      return { mode, ...(await this.importer.commit(parsed, user.id, keys)) };
+      const force = this.parseForce(user, forceRaw, reason);
+      return { mode, ...(await this.importer.commit(parsed, user.id, keys, undefined, force)) };
     }
     return { mode: 'dry-run', ...(await this.importer.preview(parsed)) };
+  }
+
+  /** Penimpaan field dilindungi: hanya ADMIN, wajib alasan. Format: {"PROJECT::Cluster": ["nilaiPoImpl", ...]} */
+  private parseForce(user: AuthUser, raw?: string, reason?: string): ImportForce | undefined {
+    if (!raw) return undefined;
+    let fields: Record<string, string[]>;
+    try {
+      fields = z.record(z.array(z.string())).parse(JSON.parse(raw));
+    } catch {
+      throw new BadRequestException('Field force tidak valid');
+    }
+    if (!Object.values(fields).some((f) => f.length)) return undefined;
+    if (user.role !== 'ADMIN') throw new ForbiddenException('Hanya ADMIN yang boleh menimpa field yang dilindungi');
+    if (!reason?.trim()) throw new BadRequestException('Alasan penimpaan wajib diisi');
+    return { fields, reason: reason.trim() };
   }
 
   private async parseRab(file?: { buffer: Buffer; originalname: string }) {
@@ -123,6 +145,23 @@ export class ImportController {
       return { mode, ...(await this.rab.commit(parsed, decisions, user.id)) };
     }
     return { mode: 'dry-run', ...(await this.rab.preview(parsed)) };
+  }
+
+  /**
+   * Import penyesuaian PO (baris "Deduction Termin 1 + Addwork" di file RAB) → PO ADDWORK/DEDUCTION per cluster.
+   * mode=dry-run → preview (nilai PO implementasi sekarang → sesudah); mode=commit → simpan.
+   */
+  @Post('po-adjustments-xlsx')
+  @HttpCode(200)
+  @Roles(...EDITOR_ROLES)
+  @ApiConsumes('multipart/form-data')
+  @ApiQuery({ name: 'mode', enum: ['dry-run', 'commit'], required: false })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
+  async poAdjustments(@CurrentUser() user: AuthUser, @Query('mode') mode = 'dry-run', @UploadedFile() file?: { buffer: Buffer; originalname: string }) {
+    const parsed = await this.parseRab(file);
+    if (!parsed.projects.some((p) => p.poAdjustments.length)) throw new BadRequestException('Baris "Deduction Termin 1 + Addwork" tidak ditemukan di file');
+    if (mode === 'commit') return { mode, ...(await this.poAdjust.commit(parsed, user.id)) };
+    return { mode: 'dry-run', ...(await this.poAdjust.preview(parsed)) };
   }
 
   /** Import buku kas (sheet dengan header Date/Description/Project/Cash In/Cash Out, mis. TELCO - OPS). */
