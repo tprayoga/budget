@@ -17,5 +17,7 @@ export function loadTestEnv() {
   process.env.JWT_REFRESH_SECRET ||= 'test-refresh-secret';
   process.env.UPLOAD_DIR = path.join(os.tmpdir(), 'indotek-test-uploads');
   process.env.SEED_PASSWORD = 'Indotek123!';
+  // supertest memakai HTTP biasa: cookie Secure tidak akan dikirim ulang
+  process.env.COOKIE_SECURE = 'false';
   process.env.TZ = 'Asia/Jakarta';
 }

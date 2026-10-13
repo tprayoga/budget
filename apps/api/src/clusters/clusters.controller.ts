@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import {
   budgetLineSchema,
@@ -18,7 +18,7 @@ import { ClustersService } from './clusters.service';
 const linesSchema = z.array(budgetLineSchema);
 
 @ApiTags('clusters')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('clusters')
 export class ClustersController {
   constructor(private readonly clusters: ClustersService) {}

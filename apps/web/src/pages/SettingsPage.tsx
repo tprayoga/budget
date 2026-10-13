@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { BUDGET_LABEL, ROLE_LABEL, type BudgetLineCode } from '@indotek/shared';
 import { api, errorMessage } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
@@ -49,7 +50,11 @@ export function SettingsPage() {
   if (s.isLoading || t.isLoading) return <Spinner />;
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <PageHeader title="Pengaturan" subtitle={`Masuk sebagai ${user?.name} (${user && ROLE_LABEL[user.role]})${admin ? '' : ' — hanya Admin yang dapat mengubah.'}`} />
+      <PageHeader
+        title="Pengaturan"
+        subtitle={`Masuk sebagai ${user?.name} (${user && ROLE_LABEL[user.role]})${admin ? '' : ' — hanya Admin yang dapat mengubah.'}`}
+        actions={<Link to="/ganti-password" className="btn-secondary">Ganti password</Link>}
+      />
       <section className="card space-y-3 p-4">
         <h2 className="font-semibold">Setting global</h2>
         <fieldset disabled={!admin} className="grid gap-3 sm:grid-cols-2">

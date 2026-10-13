@@ -27,7 +27,17 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
-export const refreshSchema = z.object({ refreshToken: z.string().min(10) });
+/** Kebijakan password: minimal 10 karakter, berisi huruf dan angka. */
+export const passwordPolicy = z
+  .string()
+  .min(10, 'Minimal 10 karakter')
+  .max(128)
+  .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), 'Harus mengandung huruf dan angka');
+
+export const changePasswordSchema = z
+  .object({ currentPassword: z.string().min(1, 'Wajib diisi'), newPassword: passwordPolicy })
+  .refine((v) => v.currentPassword !== v.newPassword, { message: 'Password baru harus berbeda', path: ['newPassword'] });
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 export const clientSchema = z.object({ name: z.string().trim().min(2).max(120) });
 
@@ -152,7 +162,7 @@ export const attachmentKindSchema = z.enum(ATTACHMENT_KINDS);
 export const userCreateSchema = z.object({
   name: z.string().trim().min(2),
   email: z.string().email(),
-  password: z.string().min(8),
+  password: passwordPolicy,
   role: z.enum(ROLES),
   jabatan: z.string().trim().max(120).nullish(),
   projectIds: z.array(z.string()).optional(),

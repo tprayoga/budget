@@ -1,5 +1,64 @@
 # Changelog
 
+## Fase 1.1 — Hardening (13 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared (Vitest; acceptance A–F, C memakai file sanitasi) | 71 lulus |
+| Test API (Jest + PostgreSQL) | 38 lulus (+9 test auth/keamanan) |
+| Test web (Vitest) | 8 lulus |
+| Playwright e2e | 6 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| `docker compose up --build` | berjalan; cookie `HttpOnly; Secure; SameSite=Lax` terverifikasi |
+
+### Keputusan review Fase 1 (diterapkan)
+
+- Aturan pelunasan, presisi `Decimal(16,12)`, seed insert-only, dan ADMIN tanpa hak approve: disetujui tanpa perubahan.
+- Setting khusus project sekarang hanya bisa diubah ADMIN & DIREKTUR (`PUT /projects/:id/settings`), dan tercatat di AuditLog. PM dan role lain hanya bisa memakai preview what-if di halaman Project (tidak disimpan).
+
+### a. File contoh berisi data asli
+
+- **File sanitasi:** `docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx` dan `docs/samples/RAB_Project_TELCO_-_IBK_1.sample.xlsx`. Isinya dibersihkan dari:
+  - nama pemohon dan nama staf/teknisi/subcon (diganti "Staf A", "Teknisi F", …),
+  - nomor rekening dan plat kendaraan,
+  - ID Google Sheet di formula IMPORTRANGE,
+  - semua komentar sel (berisi nama reviewer),
+  - metadata penulis file.
+- **Angka tidak berubah:** 6.703 sel angka dibandingkan dengan file asli, dan tidak ada yang berbeda.
+- **Test & seed:** test C, test import, dan seed memakai file sanitasi.
+- **Lokasi file asli:** `private/` (gitignored), bersama `private/sanitize-samples.cjs`. Script sanitasi ditaruh di sana karena berisi daftar nama asli.
+- **History git ditulis ulang** dengan `git filter-repo` (path file asli dan `private/` dihapus dari semua commit). Hash commit berubah. Hasil verifikasi:
+  - `git log --all -- docs/samples/` hanya menampilkan commit yang menambah file `*.sample.xlsx`.
+  - `git log --all -S5225173963` dan `git grep` di semua revisi: 0 hasil.
+  - Pemeriksaan seluruh objek git (180 blob, termasuk isi xlsx yang di-unzip), dicari nomor rekening, nama pemohon, dan ID sheet: 0 hasil.
+  - Reflog dan objek unreachable: 0.
+
+### b. Auth berbasis cookie
+
+- **Lokasi token:** access token (cookie `access_token`, path `/api`) dan refresh token (cookie `refresh_token`, path `/api/auth`), keduanya `HttpOnly; Secure; SameSite=Lax`. Body respons login/refresh hanya berisi data user. Header `Authorization: Bearer` tidak lagi diterima.
+- **CSRF double-submit:** cookie `csrf_token` (bisa dibaca JS) wajib dikirim ulang di header `X-CSRF-Token` untuk semua request selain GET/HEAD/OPTIONS. Dicek oleh guard global dengan `timingSafeEqual`. Pengecualian: `/auth/login`.
+- **Rotasi token:** refresh token dan token CSRF dirotasi setiap kali login, refresh, dan ganti password. Logout mencabut refresh token dan menghapus cookie.
+- **Web:** semua pemakaian `localStorage` untuk token dihapus. Fetch memakai cookie sesi, membaca `csrf_token` untuk header, dan otomatis refresh saat 401.
+
+### c. Keamanan akun
+
+- **User demo:** hanya dibuat bila `NODE_ENV != production`. Di production, seed membuat master data dan admin awal dari `INITIAL_ADMIN_EMAIL`/`INITIAL_ADMIN_PASSWORD`, tanpa cluster contoh (kecuali `SEED_SAMPLE_CLUSTERS=true`). Dites di DB terpisah.
+- **Wajib ganti password:**
+  - Kolom baru `User.mustChangePassword` (default true untuk user baru dan user demo).
+  - Selama belum diganti, semua endpoint kecuali `/auth/me`, `/auth/change-password`, `/auth/refresh`, dan `/auth/logout` membalas 403 `PASSWORD_CHANGE_REQUIRED`. Web mengarahkan ke halaman "Ganti password".
+  - Kebijakan password: minimal 10 karakter, berisi huruf dan angka, tidak boleh sama dengan password lama.
+  - Ganti password mencabut semua sesi lain dan tercatat di AuditLog (tanpa nilai password).
+- **Rate limit `/auth/login`:** 5 percobaan per 60 detik per IP + email (bisa diatur dengan `LOGIN_RATE_LIMIT` dan `LOGIN_RATE_WINDOW_MS`), membalas 429 dengan sisa waktu tunggu. `trust proxy` diaktifkan agar IP klien di belakang nginx terbaca benar.
+
+### Yang perlu direview (1.1)
+
+- [ ] **Rate limiter disimpan di memori proses.** Cukup untuk satu instance API; perlu Redis bila API dijalankan lebih dari satu instance.
+- [ ] **Login via HTTP non-localhost:** cookie `Secure` mewajibkan HTTPS untuk host selain localhost. Untuk uji coba di HP lewat IP LAN, set `COOKIE_SECURE=false` sementara, atau pasang HTTPS (disarankan sebelum direktur/investor memakai dari HP).
+- [ ] **Docker build cache lokal** masih bisa menyimpan layer lama berisi file asli (image lama sudah terganti). Jalankan `docker builder prune` bila perlu.
+- [ ] **Repo lain yang sudah memakai history lama:** belum ada remote, jadi aman. Bila repo ini pernah disalin ke tempat lain sebelum 1.1, salinan itu masih memuat file asli.
+
 ## Fase 1 — Fondasi, Budget per Cluster, Form Pengajuan Dana (13 Oktober 2026)
 
 ### Status verifikasi

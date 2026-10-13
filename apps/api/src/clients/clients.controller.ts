@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, Param, Patch, Post, ConflictException } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import { clientSchema } from '@indotek/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -8,7 +8,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { ApiZodBody, ZBody } from '../common/zod';
 
 @ApiTags('clients')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('clients')
 export class ClientsController {
   constructor(

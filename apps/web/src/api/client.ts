@@ -1,11 +1,11 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
-const KEY = 'indotek.auth';
+const CSRF_COOKIE = 'csrf_token';
+const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-export interface StoredAuth {
-  accessToken: string;
-  refreshToken: string;
-}
-
+/**
+ * Token sesi disimpan API di cookie httpOnly (tidak bisa dibaca JS). Untuk request yang mengubah data,
+ * nilai cookie csrf_token dikirim ulang di header X-CSRF-Token (double-submit).
+ */
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -16,44 +16,36 @@ export class ApiError extends Error {
   }
 }
 
-export function loadAuth(): StoredAuth | null {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as StoredAuth) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveAuth(a: StoredAuth | null) {
-  try {
-    if (a) localStorage.setItem(KEY, JSON.stringify(a));
-    else localStorage.removeItem(KEY);
-  } catch {
-    /* storage tidak tersedia */
-  }
+export function readCsrfToken(): string | null {
+  const m = document.cookie.split('; ').find((c) => c.startsWith(`${CSRF_COOKIE}=`));
+  return m ? decodeURIComponent(m.slice(CSRF_COOKIE.length + 1)) : null;
 }
 
 let refreshing: Promise<boolean> | null = null;
 let onLogout: (() => void) | null = null;
-export function setLogoutHandler(fn: () => void) {
-  onLogout = fn;
+let onPasswordChangeRequired: (() => void) | null = null;
+export function setSessionHandlers(h: { logout: () => void; passwordChangeRequired: () => void }) {
+  onLogout = h.logout;
+  onPasswordChangeRequired = h.passwordChangeRequired;
 }
 
-async function refresh(): Promise<boolean> {
-  const auth = loadAuth();
-  if (!auth) return false;
-  refreshing ??= fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken: auth.refreshToken }),
-  })
-    .then(async (r) => {
-      if (!r.ok) return false;
-      const j = await r.json();
-      saveAuth({ accessToken: j.accessToken, refreshToken: j.refreshToken });
-      return true;
-    })
+function withCsrf(init: RequestInit): RequestInit {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const headers = new Headers(init.headers);
+  if (!SAFE.has(method)) {
+    const csrf = readCsrfToken();
+    if (csrf) headers.set('X-CSRF-Token', csrf);
+  }
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  return { ...init, headers, credentials: 'same-origin' };
+}
+
+/** Perbarui sesi memakai refresh token di cookie (satu permintaan bersamaan). */
+export function refreshSession(): Promise<boolean> {
+  refreshing ??= fetch(`${BASE}/auth/refresh`, withCsrf({ method: 'POST' }))
+    .then((r) => r.ok)
     .catch(() => false)
     .finally(() => {
       refreshing = null;
@@ -62,16 +54,9 @@ async function refresh(): Promise<boolean> {
 }
 
 async function raw(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-  const auth = loadAuth();
-  const headers = new Headers(init.headers);
-  if (auth) headers.set('Authorization', `Bearer ${auth.accessToken}`);
-  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json');
-  }
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
-  if (res.status === 401 && retry && auth && !path.startsWith('/auth/')) {
-    if (await refresh()) return raw(path, init, false);
-    saveAuth(null);
+  const res = await fetch(`${BASE}${path}`, withCsrf(init));
+  if (res.status === 401 && retry && !path.startsWith('/auth/login') && !path.startsWith('/auth/refresh')) {
+    if (await refreshSession()) return raw(path, init, false);
     onLogout?.();
   }
   if (!res.ok) {
@@ -81,6 +66,7 @@ async function raw(path: string, init: RequestInit = {}, retry = true): Promise<
     } catch {
       /* bukan JSON */
     }
+    if (res.status === 403 && body?.code === 'PASSWORD_CHANGE_REQUIRED') onPasswordChangeRequired?.();
     const msg = body?.message;
     throw new ApiError(res.status, Array.isArray(msg) ? msg.join(', ') : String(msg ?? res.statusText), body);
   }
@@ -94,7 +80,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   return (await res.json()) as T;
 }
 
-/** Unduh file (PDF/XLSX) dengan header Authorization lalu buka/simpan. */
+/** Unduh file (PDF/XLSX) memakai sesi cookie lalu buka/simpan. */
 export async function download(path: string, fallbackName: string, open = false) {
   const res = await raw(path);
   const blob = await res.blob();

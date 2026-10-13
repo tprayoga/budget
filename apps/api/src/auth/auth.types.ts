@@ -5,6 +5,7 @@ export interface AuthUser {
   email: string;
   name: string;
   role: Role;
+  mustChangePassword: boolean;
 }
 
 export interface JwtPayload {
@@ -12,4 +13,6 @@ export interface JwtPayload {
   email: string;
   name: string;
   role: Role;
+  /** must change password */
+  mcp?: boolean;
 }

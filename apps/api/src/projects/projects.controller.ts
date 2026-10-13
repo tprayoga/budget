@@ -1,5 +1,5 @@
 import { ConflictException, Controller, Delete, Get, Param, Patch, Post, Put } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { projectSchema, projectUpdateSchema } from '@indotek/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,7 +12,7 @@ import { ApiZodBody, ZBody } from '../common/zod';
 const membersSchema = z.object({ userIds: z.array(z.string()) });
 
 @ApiTags('projects')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('projects')
 export class ProjectsController {
   constructor(

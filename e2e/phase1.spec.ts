@@ -1,8 +1,35 @@
 import { expect, test } from '@playwright/test';
 import path from 'node:path';
-import { SHOTS, login, logout } from './helpers';
+import { NEW_PASSWORD, PASSWORD, SHOTS, login, logout } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
+
+test('Login pertama wajib ganti password; sesi di cookie httpOnly, tidak ada token di localStorage', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Email').fill('admin@indotek.test');
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Masuk' }).click();
+  await expect(page).toHaveURL(/\/ganti-password/);
+  await page.goto('/rekap');
+  await expect(page).toHaveURL(/\/ganti-password/);
+  await page.getByLabel('Password saat ini').fill(PASSWORD);
+  await page.getByLabel('Password baru').fill('pendek');
+  await page.getByRole('button', { name: 'Simpan password' }).click();
+  await expect(page.getByText('Minimal 10 karakter')).toBeVisible();
+  await page.getByLabel('Password baru').fill(NEW_PASSWORD);
+  await page.getByRole('button', { name: 'Simpan password' }).click();
+  await expect(page).toHaveURL(/\/rekap/);
+
+  expect(await page.evaluate(() => Object.keys(window.localStorage))).toEqual([]);
+  const cookies = await page.context().cookies();
+  const byName = Object.fromEntries(cookies.map((c) => [c.name, c]));
+  expect(byName.access_token.httpOnly).toBe(true);
+  expect(byName.access_token.secure).toBe(true);
+  expect(byName.access_token.sameSite).toBe('Lax');
+  expect(byName.refresh_token.httpOnly).toBe(true);
+  expect(byName.csrf_token.httpOnly).toBe(false);
+  expect(await page.evaluate(() => document.cookie)).not.toContain('access_token');
+});
 
 test('Rekap: total project, filter, preview asumsi tanpa simpan', async ({ page }) => {
   await login(page, 'pm');
@@ -33,6 +60,15 @@ test('Project grid: edit inline + toggle mode, hitung live', async ({ page }) =>
   await page.getByRole('link', { name: 'TOTAL ADW' }).click();
   await expect(page.getByTestId('project-grid')).toBeVisible();
   await page.screenshot({ path: path.join(SHOTS, 'project-grid.png') });
+
+  // PM tidak bisa menyimpan setting project, hanya preview what-if
+  await page.getByRole('button', { name: 'Coba what-if setting project' }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Simpan' })).toHaveCount(0);
+  await page.getByRole('switch', { name: 'Interest khusus project' }).click();
+  await page.getByLabel('Interest project persen').fill('20');
+  await page.getByRole('dialog').getByRole('button', { name: 'Preview' }).click();
+  await expect(page.getByText(/Mode preview: interest 20,00%/)).toBeVisible();
+  await page.getByRole('button', { name: 'Batalkan' }).click();
 
   await page.getByRole('button', { name: 'Indirect Cost Gempol Cirebon', exact: true }).click();
   const input = page.getByRole('textbox', { name: 'Indirect Cost Gempol Cirebon' });

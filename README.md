@@ -40,15 +40,29 @@ Seed bersifat idempotent dan tidak menimpa data yang sudah ada.
 
 ## Akun demo
 
-Password semua akun: **`Indotek123!`** (bisa diubah lewat `SEED_PASSWORD`).
+Password awal semua akun: **`Indotek123!`** (bisa diubah lewat `SEED_PASSWORD`). Saat login pertama, setiap akun **wajib mengganti password** (minimal 10 karakter, berisi huruf dan angka).
+
+User demo hanya dibuat bila `NODE_ENV` bukan `production`. Di production, seed hanya membuat master data dan admin awal dari `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD`. Cluster contoh tidak diimpor kecuali `SEED_SAMPLE_CLUSTERS=true`.
 
 | Role | Email | Catatan |
 |---|---|---|
-| ADMIN | admin@indotek.test | Mengubah setting global, template, akses investor; override sisa budget |
+| ADMIN | admin@indotek.test | Mengubah setting global & setting project, template, akses investor; override sisa budget |
 | PM | pm@indotek.test | Edit budget, buat & ajukan pengajuan dana |
 | FINANCE | finance@indotek.test | Periksa pengajuan, tandai dicairkan |
-| DIREKTUR | direktur@indotek.test | Setujui pengajuan |
+| DIREKTUR | direktur@indotek.test | Setujui pengajuan; ubah setting khusus project |
 | INVESTOR | investor@indotek.test | Hanya project **ADW** (untuk menguji pembatasan akses) |
+
+## Keamanan sesi
+
+- **Penyimpanan token:** access token dan refresh token disimpan di cookie `HttpOnly; Secure; SameSite=Lax`, tidak pernah di `localStorage`.
+- **CSRF:** request yang mengubah data wajib membawa header `X-CSRF-Token` yang sama dengan cookie `csrf_token` (double-submit).
+- **Rate limit login:** maksimal 5 percobaan per menit per kombinasi IP + email.
+- **Akses lewat HTTP:** browser modern menerima cookie `Secure` di `http://localhost`. Untuk akses HTTP dari host lain (mis. IP LAN saat uji coba di HP), set `COOKIE_SECURE=false`. Jangan lakukan ini di production; gunakan HTTPS.
+
+## File contoh
+
+- **Isi folder `docs/samples/`:** file `*.sample.xlsx` yang sudah disanitasi. Nama orang, nomor rekening, komentar, metadata penulis, dan ID Google Sheet sudah diganti, sementara angka tetap sama.
+- **File asli:** disimpan di `private/`, yang masuk `.gitignore` dan tidak pernah di-commit.
 
 ## Pengembangan lokal
 

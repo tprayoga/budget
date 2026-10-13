@@ -19,8 +19,9 @@ export function LoginPage() {
   const onSubmit = handleSubmit(async (v) => {
     setErr(null);
     try {
-      await login(v.email, v.password);
-      nav((loc.state as { from?: string } | null)?.from ?? '/rekap', { replace: true });
+      const me = await login(v.email, v.password);
+      const from = (loc.state as { from?: string } | null)?.from ?? '/rekap';
+      nav(me.mustChangePassword ? '/ganti-password' : from, { replace: true, state: { from } });
     } catch (e) {
       setErr(errorMessage(e));
     }

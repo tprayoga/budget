@@ -46,6 +46,23 @@ const USERS: { email: string; name: string; role: Role; jabatan: string; project
 
 const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
+/**
+ * Production: tidak ada user demo. Admin awal dibuat dari INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD
+ * (hanya bila belum ada ADMIN), dan wajib ganti password saat login pertama.
+ */
+async function ensureInitialAdmin() {
+  if (await prisma.user.count({ where: { role: 'ADMIN' } })) return;
+  const email = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase();
+  const pass = process.env.INITIAL_ADMIN_PASSWORD;
+  if (!email || !pass) {
+    console.warn('Production: belum ada ADMIN. Set INITIAL_ADMIN_EMAIL & INITIAL_ADMIN_PASSWORD lalu jalankan seed.');
+    return;
+  }
+  await prisma.user.create({
+    data: { email, name: 'Administrator', role: 'ADMIN', passwordHash: await bcrypt.hash(pass, 10), mustChangePassword: true },
+  });
+}
+
 async function main() {
   const password = process.env.SEED_PASSWORD || 'Indotek123!';
   const audit = new AuditService(prisma as unknown as PrismaService);
@@ -102,31 +119,42 @@ async function main() {
     }
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  for (const u of USERS) {
-    const user = await prisma.user.upsert({
-      where: { email: u.email },
-      create: { email: u.email, name: u.name, role: u.role, jabatan: u.jabatan, passwordHash },
-      update: { name: u.name, role: u.role, jabatan: u.jabatan },
-    });
-    for (const code of u.projects ?? []) {
-      const project = await prisma.project.findUniqueOrThrow({ where: { code } });
-      await prisma.projectMember.upsert({
-        where: { userId_projectId: { userId: user.id, projectId: project.id } },
-        create: { userId: user.id, projectId: project.id },
-        update: {},
+  const production = process.env.NODE_ENV === 'production';
+  if (!production) {
+    // User demo hanya untuk non-production; semuanya wajib ganti password saat login pertama
+    const passwordHash = await bcrypt.hash(password, 10);
+    for (const u of USERS) {
+      const user = await prisma.user.upsert({
+        where: { email: u.email },
+        create: { email: u.email, name: u.name, role: u.role, jabatan: u.jabatan, passwordHash, mustChangePassword: true },
+        update: { name: u.name, role: u.role, jabatan: u.jabatan },
       });
+      for (const code of u.projects ?? []) {
+        const project = await prisma.project.findUniqueOrThrow({ where: { code } });
+        await prisma.projectMember.upsert({
+          where: { userId_projectId: { userId: user.id, projectId: project.id } },
+          create: { userId: user.id, projectId: project.id },
+          update: {},
+        });
+      }
     }
+  } else {
+    await ensureInitialAdmin();
+  }
+
+  if (production && process.env.SEED_SAMPLE_CLUSTERS !== 'true') {
+    console.log('Seed selesai (production): master data saja; cluster contoh tidak diimpor.');
+    return;
   }
 
   // Cluster dari file contoh: hanya cluster yang BELUM ada (seed jalan di setiap start container,
   // jadi tidak boleh menimpa perubahan user; pembaruan dari Excel lewat menu Import).
   const importer = new BudgetImporter(prisma, audit, settings);
   const parsed = await importer.parse(await readFile(SAMPLE));
-  const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin@indotek.test' } });
+  const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' }, orderBy: { createdAt: 'asc' } });
   const preview = await importer.preview(parsed);
   const newKeys = preview.clusters.filter((c) => c.status === 'NEW').map((c) => c.key);
-  const res = newKeys.length ? await importer.commit(parsed, admin.id, newKeys) : { created: 0, updated: 0 };
+  const res = newKeys.length ? await importer.commit(parsed, admin?.id ?? null, newKeys) : { created: 0, updated: 0 };
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },
     orderBy: { code: 'asc' },

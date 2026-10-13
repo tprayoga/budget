@@ -1,5 +1,5 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { zRate } from '@indotek/shared';
 import { CurrentUser } from '../auth/decorators';
@@ -16,7 +16,7 @@ const previewSchema = z.object({
 });
 
 @ApiTags('budget')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller()
 export class BudgetController {
   constructor(private readonly budget: BudgetService) {}

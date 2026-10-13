@@ -105,6 +105,8 @@ model User {
   role         Role
   jabatan      String?
   active       Boolean  @default(true)
+  /// Wajib ganti password saat login berikutnya (default untuk user baru & user demo)
+  mustChangePassword Boolean @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

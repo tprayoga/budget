@@ -9,7 +9,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiConsumes, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiConsumes, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SettingsService } from '../settings/settings.service';
@@ -18,7 +18,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { BudgetImporter } from './budget-importer';
 
 @ApiTags('import')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('import')
 export class ImportController {
   private readonly importer: BudgetImporter;

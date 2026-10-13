@@ -18,6 +18,7 @@ export interface Me {
   email: string;
   role: Role;
   jabatan: string | null;
+  mustChangePassword: boolean;
   projectIds: string[];
 }
 

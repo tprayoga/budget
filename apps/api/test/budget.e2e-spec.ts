@@ -1,7 +1,6 @@
 import ExcelJS from 'exceljs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import request from 'supertest';
 import { dec } from '@indotek/shared';
 import { parseBudgetWorkbook } from '@indotek/shared/xlsx';
 import { binaryParser, clusterId, createApp } from './helpers';
@@ -134,7 +133,7 @@ describe('Cluster — CRUD, template default, duplicate, audit', () => {
 describe('Import & export Excel', () => {
   it('dry-run file contoh setelah seed → semua UNCHANGED', async () => {
     const { srv, auth } = ctx.api('pm').raw();
-    const res = await request(srv)
+    const res = await srv
       .post('/api/import/budget-xlsx?mode=dry-run')
       .set(auth)
       .attach('file', readFileSync(SAMPLE), 'Budget.xlsx')
@@ -153,11 +152,11 @@ describe('Import & export Excel', () => {
     ws.getCell('E4').value = 50000000; // Nilai PO Implementasi cluster pertama CCSI
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const { srv, auth } = ctx.api('pm').raw();
-    const dry = await request(srv).post('/api/import/budget-xlsx').set(auth).attach('file', buf, 'b.xlsx').expect(200);
+    const dry = await srv.post('/api/import/budget-xlsx').set(auth).attach('file', buf, 'b.xlsx').expect(200);
     const changed = dry.body.clusters.filter((c: { status: string }) => c.status === 'CHANGED');
     expect(changed).toHaveLength(1);
     expect(changed[0].diffs).toEqual([{ field: 'nilaiPoImpl', oldValue: expect.any(String), newValue: '50000000' }]);
-    const commit = await request(srv)
+    const commit = await srv
       .post('/api/import/budget-xlsx?mode=commit')
       .set(auth)
       .field('keys', JSON.stringify([changed[0].key]))
@@ -165,12 +164,12 @@ describe('Import & export Excel', () => {
       .expect(200);
     expect(commit.body).toMatchObject({ created: 0, updated: 1 });
     // kembalikan nilai asal
-    await request(srv).post('/api/import/budget-xlsx?mode=commit').set(auth).attach('file', readFileSync(SAMPLE), 'b.xlsx').expect(200);
+    await srv.post('/api/import/budget-xlsx?mode=commit').set(auth).attach('file', readFileSync(SAMPLE), 'b.xlsx').expect(200);
   });
 
   it('INVESTOR/FINANCE tidak boleh import', async () => {
     const { srv } = ctx.api('finance').raw();
-    await request(srv)
+    await srv
       .post('/api/import/budget-xlsx')
       .set(ctx.api('finance').raw().auth)
       .attach('file', readFileSync(SAMPLE), 'b.xlsx')
@@ -179,14 +178,14 @@ describe('Import & export Excel', () => {
 
   it('export budget → import ulang tanpa perubahan (round-trip)', async () => {
     const { srv, auth } = ctx.api('pm').raw();
-    const exp = await request(srv).get('/api/export/budget.xlsx').set(auth).buffer(true).parse(binaryParser).expect(200);
+    const exp = await srv.get('/api/export/budget.xlsx').set(auth).buffer(true).parse(binaryParser).expect(200);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(exp.body);
     expect(wb.worksheets.map((w) => w.name)).toEqual(['Rekap', 'ADW', 'CCSI', 'EVANTAMA']);
     const parsed = parseBudgetWorkbook(wb);
     expect(parsed.interestRate).toBe('0.1');
     expect(parsed.retensiAsCost).toBe(true);
-    const dry = await request(srv).post('/api/import/budget-xlsx').set(auth).attach('file', exp.body, 'export.xlsx').expect(200);
+    const dry = await srv.post('/api/import/budget-xlsx').set(auth).attach('file', exp.body, 'export.xlsx').expect(200);
     const notUnchanged = dry.body.clusters.filter((c: { status: string }) => c.status !== 'UNCHANGED');
     expect(notUnchanged).toEqual([]);
   });

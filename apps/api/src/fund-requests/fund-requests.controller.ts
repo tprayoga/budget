@@ -11,7 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { z } from 'zod';
 import {
@@ -49,7 +49,7 @@ const attachmentUpdateSchema = z.object({
 });
 
 @ApiTags('fund-requests')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('fund-requests')
 export class FundRequestsController {
   constructor(

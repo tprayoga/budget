@@ -21,7 +21,7 @@ import { api, download, errorMessage } from '../api/client';
 import type { Cluster, ProjectBudget } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Field, Modal, PageHeader, Spinner, Toggle, cx } from '../components/ui';
-import { calcClusterLocal, effectiveAssumption } from '../lib/budget';
+import { calcClusterLocal, effectiveAssumption, type Assumption } from '../lib/budget';
 import { formatAngka, formatPersen, isNegative, pctInputToRatio, ratioToPctInput, rpInputToValue } from '../lib/format';
 import { isClusterChanged, setField, setLineValue, toggleLineMode, toUpdatePayload, type ClusterField } from '../lib/grid';
 
@@ -134,8 +134,11 @@ export function ProjectPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<ClusterStatus | ''>('');
   const [addOpen, setAddOpen] = useState(false);
+  /** Preview what-if setting project (tidak disimpan). */
+  const [preview, setPreview] = useState<Assumption | null>(null);
 
-  const assumption = q.data ? effectiveAssumption(q.data.setting, { interestRate: q.data.setting.interestRate, retensiAsCost: q.data.setting.retensiAsCost }) : null;
+  const saved = q.data ? effectiveAssumption(q.data.setting, { interestRate: q.data.setting.interestRate, retensiAsCost: q.data.setting.retensiAsCost }) : null;
+  const assumption = preview ?? saved;
 
   const cols: ColData[] = useMemo(() => {
     if (!q.data || !assumption) return [];
@@ -252,7 +255,13 @@ export function ProjectPage() {
         }
       />
 
-      {editable && <ProjectSettingPanel projectId={id} />}
+      <ProjectSettingPanel
+        projectId={id}
+        canSave={can('ADMIN', 'DIREKTUR')}
+        current={assumption!}
+        previewing={!!preview}
+        onPreview={setPreview}
+      />
 
       <div className="mb-3 flex flex-col gap-2 sm:flex-row">
         <label className="relative flex-1">
@@ -462,7 +471,23 @@ function GridCell({ row, col, editable, update }: { row: RowDef; col: ColData; e
   }
 }
 
-function ProjectSettingPanel({ projectId }: { projectId: string }) {
+/**
+ * Setting khusus project. ADMIN & DIREKTUR dapat menyimpan (tercatat di audit log);
+ * role lain hanya bisa mencoba preview what-if tanpa menyimpan.
+ */
+function ProjectSettingPanel({
+  projectId,
+  canSave,
+  current,
+  previewing,
+  onPreview,
+}: {
+  projectId: string;
+  canSave: boolean;
+  current: Assumption;
+  previewing: boolean;
+  onPreview: (a: Assumption | null) => void;
+}) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['project-setting', projectId],
@@ -483,6 +508,7 @@ function ProjectSettingPanel({ projectId }: { projectId: string }) {
       }),
     onSuccess: async () => {
       setOpen(false);
+      onPreview(null);
       await qc.invalidateQueries({ queryKey: ['project-setting', projectId] });
       await qc.invalidateQueries({ queryKey: ['project-budget', projectId] });
       await qc.invalidateQueries({ queryKey: ['rekap'] });
@@ -490,35 +516,52 @@ function ProjectSettingPanel({ projectId }: { projectId: string }) {
   });
   if (!q.data) return null;
   const o = q.data.override;
+  const global = q.data.effective;
+  const applyPreview = () => {
+    const r = useRate ? pctInputToRatio(rate) : null;
+    onPreview({ interestRate: r ?? global.interestRate, retensiAsCost: ret ?? global.retensiAsCost });
+    setOpen(false);
+  };
+
   return (
-    <div className="mb-3 text-sm">
+    <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
       <button
         className="text-brand underline-offset-2 hover:underline"
         onClick={() => {
-          setUseRate(o?.interestRate != null);
-          setRate(ratioToPctInput(o?.interestRate ?? q.data.effective.interestRate));
-          setRet(o?.retensiAsCost ?? null);
+          setUseRate(o?.interestRate != null || previewing);
+          setRate(ratioToPctInput(current.interestRate));
+          setRet(o?.retensiAsCost ?? (previewing ? current.retensiAsCost : null));
           setOpen(true);
         }}
       >
-        Atur setting khusus project ini
+        {canSave ? 'Atur setting khusus project ini' : 'Coba what-if setting project'}
       </button>
+      {previewing && (
+        <span className="inline-flex items-center gap-2 rounded-lg bg-accent-100 px-2 py-1 text-xs text-amber-900">
+          Mode preview: interest {formatPersen(current.interestRate)} · retensi {current.retensiAsCost ? 'biaya' : 'bukan biaya'} — belum disimpan
+          <button className="font-semibold underline" onClick={() => onPreview(null)}>Batalkan</button>
+        </span>
+      )}
       <Modal
         open={open}
-        title="Setting project (override global)"
+        title={canSave ? 'Setting project (override global)' : 'What-if setting project'}
         onClose={() => setOpen(false)}
         footer={
           <>
             <button className="btn-secondary" onClick={() => setOpen(false)}>Batal</button>
-            <button className="btn-primary" disabled={m.isPending || (useRate && pctInputToRatio(rate) === null)} onClick={() => m.mutate()}>Simpan</button>
+            <button className="btn-secondary" disabled={useRate && pctInputToRatio(rate) === null} onClick={applyPreview}>Preview</button>
+            {canSave && (
+              <button className="btn-primary" disabled={m.isPending || (useRate && pctInputToRatio(rate) === null)} onClick={() => m.mutate()}>Simpan</button>
+            )}
           </>
         }
       >
+        {!canSave && <p className="text-xs text-slate-500">Hanya Admin & Direktur yang dapat menyimpan setting project. Preview tidak disimpan.</p>}
         <ErrorBox error={m.error ? errorMessage(m.error) : null} />
         <Toggle checked={useRate} onChange={setUseRate} label="Interest khusus project" />
         {useRate && (
           <Field label="Interest (%)">
-            <input className="input" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+            <input className="input" inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} aria-label="Interest project persen" />
           </Field>
         )}
         <Field label="Retensi sebagai biaya">

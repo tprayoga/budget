@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
+import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { FundRequestDetailPage } from './pages/FundRequestDetailPage';
 import { FundRequestListPage } from './pages/FundRequestListPage';
@@ -19,6 +20,7 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   const loc = useLocation();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
+  if (user.mustChangePassword) return <Navigate to="/ganti-password" replace state={{ from: loc.pathname }} />;
   return children;
 }
 
@@ -26,6 +28,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/ganti-password" element={<ChangePasswordPage />} />
       <Route
         element={
           <RequireAuth>

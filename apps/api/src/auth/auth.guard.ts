@@ -1,11 +1,16 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
+import type { Request } from 'express';
 import type { Role } from '@indotek/shared';
-import { IS_PUBLIC, ROLES_KEY } from './decorators';
+import { ACCESS_COOKIE } from './cookies';
+import { ALLOW_PENDING_PASSWORD, IS_PUBLIC, ROLES_KEY } from './decorators';
 import type { AuthUser, JwtPayload } from './auth.types';
 
-/** Guard global: verifikasi JWT access token, lalu cek @Roles. */
+/**
+ * Guard global: verifikasi JWT access token dari cookie httpOnly, blokir user yang wajib ganti password,
+ * lalu cek @Roles. Token di header Authorization tidak diterima.
+ */
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -17,9 +22,8 @@ export class AuthGuard implements CanActivate {
     const targets = [ctx.getHandler(), ctx.getClass()];
     if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
 
-    const req = ctx.switchToHttp().getRequest();
-    const header: string | undefined = req.headers.authorization;
-    const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+    const req = ctx.switchToHttp().getRequest<Request & { user?: AuthUser }>();
+    const token: string | undefined = req.cookies?.[ACCESS_COOKIE];
     if (!token) throw new UnauthorizedException('Silakan login');
 
     let payload: JwtPayload;
@@ -28,8 +32,18 @@ export class AuthGuard implements CanActivate {
     } catch {
       throw new UnauthorizedException('Sesi berakhir, silakan login ulang');
     }
-    const user: AuthUser = { id: payload.sub, email: payload.email, name: payload.name, role: payload.role };
+    const user: AuthUser = {
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      role: payload.role,
+      mustChangePassword: !!payload.mcp,
+    };
     req.user = user;
+
+    if (user.mustChangePassword && !this.reflector.getAllAndOverride<boolean>(ALLOW_PENDING_PASSWORD, targets)) {
+      throw new ForbiddenException({ message: 'Anda wajib mengganti password terlebih dahulu', code: 'PASSWORD_CHANGE_REQUIRED' });
+    }
 
     const roles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES_KEY, targets);
     if (roles && !roles.includes(user.role)) {

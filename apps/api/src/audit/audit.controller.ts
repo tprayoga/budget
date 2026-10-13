@@ -1,10 +1,10 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators';
 import { AuditService } from './audit.service';
 
 @ApiTags('audit')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('audit')
 export class AuditController {
   constructor(private readonly audit: AuditService) {}

@@ -1,5 +1,5 @@
 import { Controller, Get, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import * as bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { userCreateSchema } from '@indotek/shared';
@@ -10,7 +10,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { ApiZodBody, ZBody } from '../common/zod';
 
 @ApiTags('users')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('users')
 @Roles('ADMIN')
 export class UsersController {

@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Put } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import {
   settingGlobalSchema,
   settingSchema,
@@ -8,14 +8,14 @@ import {
   type TemplateInput,
 } from '@indotek/shared';
 import { AccessService } from '../access/access.service';
-import { CurrentUser, EDITOR_ROLES, Roles } from '../auth/decorators';
+import { CurrentUser, EDITOR_ROLES, PROJECT_SETTING_ROLES, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { ApiZodBody, ZBody } from '../common/zod';
 import { SettingsService } from './settings.service';
 import { TemplatesService } from './templates.service';
 
 @ApiTags('settings')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller()
 export class SettingsController {
   constructor(
@@ -43,8 +43,9 @@ export class SettingsController {
     return this.settings.getProject(projectId);
   }
 
+  /** Setting khusus project: hanya ADMIN & DIREKTUR (PM read-only, memakai preview what-if di web). */
   @Put('projects/:projectId/settings')
-  @Roles(...EDITOR_ROLES)
+  @Roles(...PROJECT_SETTING_ROLES)
   @ApiZodBody(settingSchema)
   async updateProject(
     @CurrentUser() user: AuthUser,

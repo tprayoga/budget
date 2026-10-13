@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Res } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { frListQuerySchema, todayJakartaIso } from '@indotek/shared';
@@ -22,7 +22,7 @@ function send(res: Response, buf: Buffer, name: string) {
 }
 
 @ApiTags('export')
-@ApiBearerAuth()
+@ApiCookieAuth()
 @Controller('export')
 export class ExportController {
   constructor(

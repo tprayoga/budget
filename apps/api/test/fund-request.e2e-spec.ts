@@ -1,4 +1,3 @@
-import request from 'supertest';
 import { binaryParser, clusterId, createApp } from './helpers';
 
 let ctx: Awaited<ReturnType<typeof createApp>>;
@@ -25,7 +24,7 @@ async function approveAll(id: string) {
 
 function disburse(id: string, tanggal = '2026-10-15') {
   const { srv } = ctx.api('finance').raw();
-  return request(srv)
+  return srv
     .post(`/api/fund-requests/${id}/disburse`)
     .set(ctx.api('finance').raw().auth)
     .field('cairTanggal', tanggal)
@@ -167,7 +166,7 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
 
   it('PDF dapat diunduh (A4)', async () => {
     const { srv, auth } = ctx.api('investor').raw();
-    const res = await request(srv).get(`/api/fund-requests/${fr1}/pdf`).set(auth).buffer(true).parse(binaryParser).expect(200);
+    const res = await srv.get(`/api/fund-requests/${fr1}/pdf`).set(auth).buffer(true).parse(binaryParser).expect(200);
     expect(res.headers['content-type']).toBe('application/pdf');
     expect(res.body.subarray(0, 4).toString()).toBe('%PDF');
   }, 60000);
@@ -229,7 +228,7 @@ describe('Akses INVESTOR ke pengajuan', () => {
 
   it('export daftar pengajuan', async () => {
     const { srv, auth } = ctx.api('finance').raw();
-    const res = await request(srv).get('/api/export/fund-requests.xlsx').set(auth).buffer(true).parse(binaryParser).expect(200);
+    const res = await srv.get('/api/export/fund-requests.xlsx').set(auth).buffer(true).parse(binaryParser).expect(200);
     expect(res.body.subarray(0, 2).toString()).toBe('PK');
   });
 });
