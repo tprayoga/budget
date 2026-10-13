@@ -8,8 +8,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint && eslint e2e",
+    "typecheck": "turbo run typecheck && tsc -p e2e/tsconfig.json",
     "test": "turbo run test",
     "e2e": "pnpm --filter @indotek/shared build && pnpm --filter @indotek/api build && playwright test -c e2e/playwright.config.ts",
     "format": "prettier --write ."
@@ -17,6 +17,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.0",
     "@playwright/test": "1.48.2",
+    "@types/node": "^22.20.5",
     "eslint": "^9.39.0",
     "eslint-config-prettier": "^9.1.0",
     "globals": "^15.12.0",

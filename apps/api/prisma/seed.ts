@@ -119,17 +119,20 @@ async function main() {
     }
   }
 
-  // Cluster dari file contoh (hanya NEW/CHANGED; idempotent)
+  // Cluster dari file contoh: hanya cluster yang BELUM ada (seed jalan di setiap start container,
+  // jadi tidak boleh menimpa perubahan user; pembaruan dari Excel lewat menu Import).
   const importer = new BudgetImporter(prisma, audit, settings);
   const parsed = await importer.parse(await readFile(SAMPLE));
   const admin = await prisma.user.findUniqueOrThrow({ where: { email: 'admin@indotek.test' } });
-  const res = await importer.commit(parsed, admin.id);
+  const preview = await importer.preview(parsed);
+  const newKeys = preview.clusters.filter((c) => c.status === 'NEW').map((c) => c.key);
+  const res = newKeys.length ? await importer.commit(parsed, admin.id, newKeys) : { created: 0, updated: 0 };
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },
     orderBy: { code: 'asc' },
   });
   console.log(
-    `Seed selesai. Cluster dibuat: ${res.created}, diperbarui: ${res.updated}. ` +
+    `Seed selesai. Cluster baru dari file contoh: ${res.created}. ` +
       counts.map((c) => `${c.code}=${c._count.clusters}`).join(', '),
   );
 }

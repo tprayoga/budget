@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/.env
+.env
+.git
+.turbo
+storage
+e2e/test-results
+e2e/report
+docs/screenshots
