@@ -1,5 +1,113 @@
 # Changelog
 
+## Fase 2.2 — Keputusan review import & penyelesaian pemetaan (14 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 111 lulus |
+| Test API (Jest + PostgreSQL) | 73 lulus |
+| Test web | 9 lulus |
+| Playwright e2e | 11 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| Import RAB di DB Docker | 18 item baru + 1 dilepas dari daftar ditahan; **0 item perlu dipetakan**; import ulang 0 dibuat / 0 diperbarui |
+
+### Keputusan yang diterapkan
+
+Semua keputusan disimpan sebagai `ImportMappingRule` lewat patch data sekali jalan **`2.2-keputusan-import`** (tabel baru `DataPatch`, dipanggil dari seed sehingga berlaku sama di DB test, dev, dan Docker). Semua perubahan tercatat di AuditLog. Rincian dan angka ada di ACCEPTANCE bagian O.
+
+1. **ADW C79 → Duplikat** dengan catatan yang diminta. Bisa dibatalkan lewat tombol **Batalkan** di tab "Duplikat & dilewati": item kembali ke daftar ditahan, dan aturannya menjadi HOLD.
+2. **ADW C81 → SUBCON_MATERIAL**, pro-rata nilaiPoImpl ke 2 cluster Mangunsari Tegalsari Barat Pemalang.
+3. **CCSI D36 Allowance → pos Allowance**, pro-rata nilaiPoImpl Kalawiran & Karondoran. Aturan EQUAL hanya untuk tiket/HB/motor/kasbon/OPS.
+4. **Permit CCSI Manado**
+   - Budget: Kalawiran nilaiPoPermit 10.212.800, Karondoran 12.176.000; permitCost = 10.035.446,29 / 11.964.553,71. Tercatat di audit dengan alasan "permit pass-through dari sheet CCSI".
+   - Realisasi D31 22.000.000 → PERMIT, MANUAL pro-rata 10.212.800 : 12.176.000 (sisa pembulatan ke Karondoran).
+   - Termin klien PERMIT dibuat manual: 1 termin 100% per cluster, status **Ditagih** (sheet: Unpaid; invoice INV-RAA/001 & 002/IX/2026, tanggal invoice belum diketahui).
+   - **SND Kalawiran 4.373.496** masuk daftar ditahan sebagai item **Pendapatan/PO** (bukan biaya), dengan catatan "PO SND terpisah, belum masuk budget". Item ini tidak bisa dilepas sebagai realisasi biaya.
+5. **Pemetaan sisa**
+   - **PJD Evantama (10 item, 13.775.000)** → Cluster Sinagar Tasik, pos Allowance.
+   - **ADW "Biaya OPS":**
+     - "Alloawance CJ Ngawi" → pro-rata 5 cluster TEPAS NGAWI.
+     - 3 item PJD → pro-rata ke cluster yang **tanggal implementasinya ≤ tanggal expense** (kosong ikut). Penerimanya: C67 (25/05) 10 cluster, C68 (17/06) 10 cluster, C70 (13/08) 19 cluster. Daftar penerima tampil di preview.
+   - **Site Semarang** → Padangsari RW 12 & 13 (Semarang). **Biaya Permit 36.000.000 ditahan** dengan catatan yang diminta.
+
+### Yang dibuat
+
+- **`Cluster.implementationDate`:** diisi dari info cluster ("Implementasi : dd/mm/yyyy") oleh patch dan saat import budget, serta bisa diubah di form cluster. Fungsi `parseImplementationDate` ada di shared (dites).
+- **Aturan import `clusterFilter = IMPL_DATE_LE_EXPENSE`:** penerima ditentukan per item sesuai tanggalnya, sehingga dialokasikan per item.
+- **Sinkronisasi daftar keputusan saat commit import:**
+  - item ditahan → HELD;
+  - duplikat/dilewati → DISMISSED (data disimpan, bisa dibatalkan);
+  - item yang aturannya berubah dari ditahan menjadi terpetakan → RELEASED otomatis.
+- **API & web:**
+  - API: `POST /import/held/:id/reopen`, `GET /import/held?status=DISMISSED`. Item `kind = REVENUE` ditolak saat dilepas (409).
+  - Web: tab "Ditahan — perlu konfirmasi" | "Duplikat & dilewati" dengan tombol Batalkan; label item pendapatan; daftar cluster penerima di preview import.
+- **Label kategori PJD** menjadi "PJD / Allowance kunjungan".
+- **Script import** dapat menampilkan rekap profit proyeksi vs realisasi dan daftar final item ditahan. Ada opsi `--retensi-as-cost=true|false` untuk preview proyeksi tanpa menyimpan.
+
+### Hasil import RAB (DB Docker)
+
+| Project | Total realisasi terverifikasi | Terimpor | Dilewati | Ditahan | Duplikat | Perlu dipetakan |
+|---|---|---|---|---|---|---|
+| EVANTAMA | Rp 141.175.619 | 34 | 3 (Rp 4.320.000) | 0 | 0 | 0 |
+| ADW | Rp 375.453.286 | 102 | 0 | 0 | 3 (Rp 27.052.100) | 0 |
+| CCSI | Rp 88.413.698 | 14 | 0 | 2 (Rp 40.000.000) | 0 | 0 |
+
+Cluster dengan % terpakai tertinggi (realisasi terverifikasi / total budget pos):
+
+- **ADW:**
+  1. Subfeeder TEPAS RW 05 Ngawi **105,7% (lewat budget)**
+  2. Pulling Distribusi Mangunsari Pemalang 99,7%
+  3. Subfeeder TEPAS RW 07 Ngawi 99,1%
+  4. Distribusi TEPAS RW 05 Ngawi-REV 98,0%
+  5. Distribusi Kel Karangmulyo 94,3%
+- **EVANTAMA:**
+  1. Sinagar 77,8%
+  2. Kersanagara RW 08 63,0%
+  3. Kersanagara RW 04 40,5%
+- **CCSI:**
+  1. Karondoran 79,9%
+  2. Kalawiran 72,7%
+  3. Padangsari (Semarang) 32,7%
+
+**Profit proyeksi vs profit realisasi**
+
+Asumsi acuan: interest 10%, retensiAsCost = true.
+
+| Project | Nilai proyek | Profit proyeksi | Margin | Pembayaran klien PAID (bruto) | Realisasi biaya | Profit realisasi |
+|---|---|---|---|---|---|---|
+| EVANTAMA | 236.454.823 | −12.759.106 | −5,40% | 0 | 141.175.619 | −141.175.619 |
+| ADW | 716.165.700 | −7.815.037 | −1,09% | 0 | 375.453.286 | −375.453.286 |
+| CCSI | 158.462.159 | −4.298.845 | −2,71% | 0 | 88.413.698 | −88.413.698 |
+
+- Profit realisasi negatif karena di DB Docker belum ada pembayaran klien berstatus PAID. Pembayaran klien diinput di tab Termin Klien, dan tagihan di file RAB hanya ditampilkan sebagai referensi.
+- **Catatan setting:** di DB Docker, setting global `retensiAsCost` saat ini **false**. Audit log mencatat perubahan oleh admin@indotek.test pada 13 Okt 2026 17:51 UTC lewat aplikasi; nilai ini **tidak saya ubah**. Dengan setting tersebut, profit proyeksi menjadi EVANTAMA 7.640.924, ADW 70.963.190, dan CCSI 10.669.224. Tabel di atas memakai asumsi acuan sebagai preview, tanpa disimpan.
+
+**Daftar final item ditahan**
+
+| Sel | Item | Nominal | Catatan |
+|---|---|---|---|
+| CCSI!C58 | "… Manado Sulut" | 4.000.000 | Bertanda "????", tidak dipakai rumus mana pun |
+| CCSI!F32 | SND Kalawiran (pendapatan/PO) | 4.373.496 | PO SND terpisah, belum masuk budget |
+| CCSI!J31 | Biaya Permit Semarang | 36.000.000 | Pendapatan permit Semarang belum tercatat — cek apakah pass-through |
+
+Duplikat/dilewati (bisa dibatalkan): ADW C78, C79, C80 (Rp 27.052.100) dan EVANTAMA G145, G147, G148 (Rp 4.320.000).
+
+### Dampak yang perlu diketahui
+
+- **Permit pass-through tidak netral terhadap profit proyeksi.** Dengan rumus sekarang, permit menambah nilaiProyek (+22.388.800), tetapi juga menambah pajak (2,5% × nilai proyek = 559.720) dan interest (10% × dana investor tambahan = 2.255.972). Akibatnya profit proyeksi CCSI turun **2.426.892** (−1.871.953 → −4.298.845). Test API acuan C untuk CCSI saya sesuaikan; acuan C di level parser (file Excel) tidak berubah.
+- **Import ulang file Budget Excel** sekarang menandai 2 cluster Manado CHANGED (permit di file = 0). Commit import budget untuk cluster itu akan mengembalikan permit ke 0, jadi jangan dipilih saat commit.
+
+### Yang perlu direview
+
+- [ ] **Subfeeder TEPAS RW 05 Ngawi sudah 105,7% dari budget**, dan 3 cluster Ngawi/Pemalang lain di atas 98%. Ini terjadi setelah alokasi allowance dan PJD.
+- [ ] **Permit pass-through vs profit:** perlu diputuskan apakah permit pass-through dikecualikan dari dasar pajak dan interest (perubahan rumus). Saat ini rumus mengikuti spesifikasi Fase 1.
+- [ ] **CCSI!J31 Permit Semarang 36.000.000:** pass-through? Bila ya, nilai PO permit Semarang belum ada di budget.
+- [ ] **SND Kalawiran 4.373.496:** perlu ditambahkan sebagai nilai PO terpisah? Saat ini belum ada field "PO SND" di cluster.
+- [ ] **Termin permit CCSI:** tanggal invoice INV-RAA/001 & 002 belum diketahui (status Ditagih tanpa tanggal, sehingga jatuh tempo kosong).
+- [ ] **Redis ditunda ke fase deployment:** rate limit masih di memori proses, jadi API harus single instance.
+
 ## Fase 2.1 — Aturan import default, daftar ditahan, hitung ulang termin (14 Oktober 2026)
 
 ### Status verifikasi

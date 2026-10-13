@@ -167,7 +167,7 @@ export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
   SUBCON_MATERIAL: 'Subcon material',
   PERMIT: 'Permit',
   OPS: 'OPS teknisi',
-  PJD: 'Perjalanan dinas (PJD)',
+  PJD: 'PJD / Allowance kunjungan',
   TICKET: 'Tiket',
   HOMEBASE: 'Homebase',
   MOTOR_MOBIL: 'Motor & mobil',

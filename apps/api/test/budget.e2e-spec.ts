@@ -26,8 +26,10 @@ describe('Acceptance C — total project setelah seed/import (lewat DB)', () => 
     within1(byCode.ADW.total.profit, '-7815037');
     within1(byCode.EVANTAMA.total.nilaiProyek, '236454823');
     within1(byCode.EVANTAMA.total.profit, '-12759106');
-    within1(byCode.CCSI.total.nilaiProyek, '136073359');
-    within1(byCode.CCSI.total.profit, '-1871953');
+    // CCSI = acuan C + permit Manado (keputusan 2.2): nilaiPoPermit +22.388.800, permitCost +22.000.000,
+    // pajak 2,5% × 22.388.800 = 559.720, interest 10% × (22.000.000 + 559.720) = 2.255.972 → profit −2.426.892
+    within1(byCode.CCSI.total.nilaiProyek, '158462159');
+    within1(byCode.CCSI.total.profit, '-4298845');
   });
 
   it('Acceptance A & D lewat GET /projects/:id/budget', async () => {
@@ -131,29 +133,32 @@ describe('Cluster — CRUD, template default, duplicate, audit', () => {
 });
 
 describe('Import & export Excel', () => {
-  it('dry-run file contoh setelah seed → semua UNCHANGED', async () => {
+  it('dry-run file contoh setelah seed → UNCHANGED, kecuali permit CCSI Manado (keputusan 2.2)', async () => {
     const { srv, auth } = ctx.api('pm').raw();
     const res = await srv
       .post('/api/import/budget-xlsx?mode=dry-run')
       .set(auth)
       .attach('file', readFileSync(SAMPLE), 'Budget.xlsx')
       .expect(200);
-    const statuses = res.body.clusters
-      .filter((c: { name: string }) => !c.name.startsWith('Cluster Uji'))
-      .map((c: { status: string }) => c.status);
-    expect(new Set(statuses)).toEqual(new Set(['UNCHANGED']));
+    type C = { name: string; status: string; diffs: { field: string }[] };
+    const rows = (res.body.clusters as C[]).filter((c) => !c.name.startsWith('Cluster Uji'));
+    const manado = rows.filter((c) => c.name.includes('(Manado)'));
+    expect(manado.map((c) => c.status)).toEqual(['CHANGED', 'CHANGED']);
+    for (const c of manado) expect(c.diffs.map((d) => d.field).sort()).toEqual(['nilaiPoPermit', 'permitCost']);
+    expect(new Set(rows.filter((c) => !c.name.includes('(Manado)')).map((c) => c.status))).toEqual(new Set(['UNCHANGED']));
     expect(res.body.sheets.map((s: { projectCode: string }) => s.projectCode)).toEqual(['ADW', 'EVANTAMA', 'CCSI']);
   });
 
   it('dry-run mendeteksi perubahan dengan diff, commit menyimpan + audit', async () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(SAMPLE);
-    const ws = wb.getWorksheet('CCSI')!;
-    ws.getCell('E4').value = 50000000; // Nilai PO Implementasi cluster pertama CCSI
+    const ws = wb.getWorksheet('EVANTAMA')!;
+    ws.getCell('G4').value = 50000000; // Nilai PO Implementasi cluster kedua EVANTAMA (Kersanagara RW 08)
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     const { srv, auth } = ctx.api('pm').raw();
     const dry = await srv.post('/api/import/budget-xlsx').set(auth).attach('file', buf, 'b.xlsx').expect(200);
-    const changed = dry.body.clusters.filter((c: { status: string }) => c.status === 'CHANGED');
+    // cluster Manado tetap CHANGED karena permit (keputusan 2.2) — di luar uji ini
+    const changed = dry.body.clusters.filter((c: { status: string; name: string }) => c.status === 'CHANGED' && !c.name.includes('(Manado)'));
     expect(changed).toHaveLength(1);
     expect(changed[0].diffs).toEqual([{ field: 'nilaiPoImpl', oldValue: expect.any(String), newValue: '50000000' }]);
     const commit = await srv
@@ -163,8 +168,13 @@ describe('Import & export Excel', () => {
       .attach('file', buf, 'b.xlsx')
       .expect(200);
     expect(commit.body).toMatchObject({ created: 0, updated: 1 });
-    // kembalikan nilai asal
-    await srv.post('/api/import/budget-xlsx?mode=commit').set(auth).attach('file', readFileSync(SAMPLE), 'b.xlsx').expect(200);
+    // kembalikan nilai asal (hanya cluster ini — permit CCSI hasil keputusan 2.2 tidak boleh ikut di-revert)
+    await srv
+      .post('/api/import/budget-xlsx?mode=commit')
+      .set(auth)
+      .field('keys', JSON.stringify([changed[0].key]))
+      .attach('file', readFileSync(SAMPLE), 'b.xlsx')
+      .expect(200);
   });
 
   it('INVESTOR/FINANCE tidak boleh import', async () => {

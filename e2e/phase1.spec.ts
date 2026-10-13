@@ -37,7 +37,8 @@ test('Rekap: total project, filter, preview asumsi tanpa simpan', async ({ page 
   await expect(adwTotal).toContainText('716.165.700');
   await expect(adwTotal).toContainText('-7.815.037');
   await expect(page.getByRole('row', { name: /TOTAL EVANTAMA/ })).toContainText('-12.759.106');
-  await expect(page.getByRole('row', { name: /TOTAL CCSI/ })).toContainText('-1.871.953');
+  // CCSI termasuk permit Manado (keputusan 2.2): acuan C −1.871.953 − 2.426.892
+  await expect(page.getByRole('row', { name: /TOTAL CCSI/ })).toContainText('-4.298.845');
   await page.screenshot({ path: path.join(SHOTS, 'rekap.png'), fullPage: false });
 
   // Acceptance B lewat preview (PM tidak bisa menyimpan)

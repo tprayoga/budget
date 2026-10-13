@@ -200,3 +200,10 @@ export function parseBudgetWorkbook(wb: Workbook, sheetNames?: string[]): Parsed
     .map(parseProjectSheet);
   return { projects, ...parseRekap(wb, warnings), warnings };
 }
+
+/** "… · Implementasi : 22/8/2026" → "2026-08-22" (juga ejaan "Implentasi"/"Implementas"). */
+export function parseImplementationDate(info: string | null | undefined): string | null {
+  const m = info?.match(/Impl\w*\s*:\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/i);
+  if (!m) return null;
+  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+}

@@ -28,6 +28,8 @@ function dto(h: ImportHeldItem & { project?: { code: string } }) {
     suggestedCategory: h.suggestedCategory,
     suggestedTarget: h.suggestedTarget,
     status: h.status,
+    kind: h.kind,
+    resolution: h.resolution,
     note: h.note,
     expenseId: h.expenseId,
     resolvedAt: h.resolvedAt,
@@ -65,8 +67,24 @@ export class HeldItemsService {
     return h;
   }
 
+  /** Batalkan keputusan duplikat/lewati → kembali ke daftar ditahan (aturan menjadi HOLD). */
+  async reopen(user: AuthUser, id: string) {
+    const h = await this.prisma.importHeldItem.findUnique({ where: { id } });
+    if (!h) throw new NotFoundException('Item tidak ditemukan');
+    await this.access.assertProject(user, h.projectId);
+    if (h.status !== 'DISMISSED') throw new ConflictException('Hanya item duplikat/dilewati yang bisa dibatalkan');
+    await this.prisma.$transaction(async (tx) => {
+      const note = `Dibuka kembali (sebelumnya ${h.resolution === 'DUPLICATE' ? 'duplikat' : 'dilewati'}: ${h.note ?? '-'})`;
+      if (h.kind === 'EXPENSE' && !h.sourceRef.startsWith('MANUAL:')) await saveRule(tx, this.audit, h.sourceRef, h.projectId, { scope: 'HOLD', note }, user.id);
+      await tx.importHeldItem.update({ where: { id }, data: { status: 'HELD', resolution: null, note, resolvedById: null, resolvedAt: null } });
+      await this.audit.diff(tx, user.id, 'ImportHeldItem', id, { status: h.status, resolution: h.resolution }, { status: 'HELD', resolution: null });
+    });
+    return dto(await this.prisma.importHeldItem.findUniqueOrThrow({ where: { id } }));
+  }
+
   async release(user: AuthUser, id: string, input: HeldReleaseInput) {
     const h = await this.loadHeld(user, id);
+    if (h.kind !== 'EXPENSE') throw new ConflictException('Item ini pendapatan/PO, bukan biaya — tindak lanjut manual di budget / termin klien');
     await this.prisma.$transaction(async (tx) => {
       const alloc = await this.support.computeGroup(
         [h.amount.toString()],
@@ -112,8 +130,8 @@ export class HeldItemsService {
   async dismiss(user: AuthUser, id: string, input: { scope: 'SKIP' | 'DUPLICATE'; note: string }) {
     const h = await this.loadHeld(user, id);
     await this.prisma.$transaction(async (tx) => {
-      await saveRule(tx, this.audit, h.sourceRef, h.projectId, { scope: input.scope, note: input.note }, user.id);
-      await tx.importHeldItem.update({ where: { id }, data: { status: 'DISMISSED', note: input.note, resolvedById: user.id, resolvedAt: new Date() } });
+      if (!h.sourceRef.startsWith('MANUAL:')) await saveRule(tx, this.audit, h.sourceRef, h.projectId, { scope: input.scope, note: input.note }, user.id);
+      await tx.importHeldItem.update({ where: { id }, data: { status: 'DISMISSED', resolution: input.scope, note: input.note, resolvedById: user.id, resolvedAt: new Date() } });
       await this.audit.diff(tx, user.id, 'ImportHeldItem', id, { status: 'HELD' }, { status: `DISMISSED:${input.scope}` });
     });
     return dto((await this.prisma.importHeldItem.findUniqueOrThrow({ where: { id } })));

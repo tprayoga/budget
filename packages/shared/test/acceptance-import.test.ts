@@ -3,7 +3,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { calcCluster, calcProjectTotal } from '../src/calc/budget';
 import { D } from '../src/calc/decimal';
-import { parseBudgetWorkbook, type ParsedWorkbook } from '../src/xlsx/budgetSheet';
+import { parseBudgetWorkbook, parseImplementationDate, type ParsedWorkbook } from '../src/xlsx/budgetSheet';
 
 const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
@@ -71,4 +71,12 @@ describe('Deteksi mode & metadata saat import', () => {
     expect(divs.filter((d) => d === 'IBK')).toHaveLength(5);
     expect(divs.filter((d) => d === 'TELCO')).toHaveLength(25);
   });
+});
+
+describe('Tanggal implementasi dari info cluster', () => {
+  it.each([
+    ['Divisi IBK · PO: PO/2026/07774 · Implementasi: 25/05/2026', '2026-05-25'],
+    ['Divisi TELCO · SPK : 11 · PO/2026/09476 · Implementasi : 22/8/2026', '2026-08-22'],
+    ['Divisi TELCO · SPK : 10', null],
+  ])('%s → %s', (info, expected) => expect(parseImplementationDate(info)).toBe(expected));
 });

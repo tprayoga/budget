@@ -8,7 +8,7 @@ import {
   moneyStr,
   RATE_DP,
 } from '@indotek/shared';
-import { parseBudgetWorkbook, type ParsedCluster, type ParsedWorkbook } from '@indotek/shared/xlsx';
+import { parseBudgetWorkbook, parseImplementationDate, type ParsedCluster, type ParsedWorkbook } from '@indotek/shared/xlsx';
 import type { AuditService } from '../audit/audit.service';
 import type { SettingsService } from '../settings/settings.service';
 import { money, rate, s } from '../common/decimal';
@@ -241,7 +241,17 @@ export class BudgetImporter {
             const cluster = db
               ? await tx.cluster.update({ where: { id: db.id }, data })
               : await tx.cluster.create({
-                  data: { ...data, projectId, name: c.name, status: 'ONGOING', sortOrder: ++order },
+                  data: {
+                    ...data,
+                    projectId,
+                    name: c.name,
+                    status: 'ONGOING',
+                    sortOrder: ++order,
+                    implementationDate: (() => {
+                      const d = parseImplementationDate(c.info);
+                      return d ? new Date(`${d}T00:00:00Z`) : null;
+                    })(),
+                  },
                 });
             for (const l of c.lines) {
               const values = {

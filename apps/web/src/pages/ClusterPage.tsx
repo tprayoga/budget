@@ -34,6 +34,7 @@ const formSchema = z.object({
   permitCost: rp,
   pajakRate: pct,
   retensiRate: pct,
+  implementationDate: z.string().optional(),
   lines: z.array(z.object({ code: z.enum(BUDGET_LINE_CODES), mode: z.enum(['PCT', 'RP']), value: z.string() })),
 });
 type FormValues = z.infer<typeof formSchema>;
@@ -49,6 +50,7 @@ function toForm(c: Cluster): FormValues {
     permitCost: formatAngka(c.permitCost, 2).replace(/,00$/, ''),
     pajakRate: ratioToPctInput(c.pajakRate),
     retensiRate: ratioToPctInput(c.retensiRate),
+    implementationDate: c.implementationDate ?? '',
     lines: BUDGET_LINE_CODES.map((code) => {
       const l = c.lines.find((x) => x.code === code);
       const mode = l?.mode ?? 'PCT';
@@ -149,7 +151,7 @@ export function ClusterPage() {
       const c = fromForm(q.data!, v);
       return api(`/clusters/${id}`, {
         method: 'PATCH',
-        json: { ...toUpdatePayload(c), name: c.name, info: c.info, division: c.division, status: c.status },
+        json: { ...toUpdatePayload(c), name: c.name, info: c.info, division: c.division, status: c.status, implementationDate: v.implementationDate || null },
       });
     },
     onSuccess: invalidate,
@@ -251,6 +253,9 @@ export function ClusterPage() {
                 <select className="input" {...form.register('status')}>
                   {CLUSTER_STATUSES.map((s) => <option key={s} value={s}>{CLUSTER_STATUS_LABEL[s]}</option>)}
                 </select>
+              </Field>
+              <Field label="Tanggal implementasi" hint="Dipakai untuk alokasi biaya ke cluster yang sudah berjalan.">
+                <input type="date" className="input" {...form.register('implementationDate')} />
               </Field>
               <Field label="Divisi">
                 <select className="input" {...form.register('division')}>

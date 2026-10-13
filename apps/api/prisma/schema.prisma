@@ -224,6 +224,8 @@ model Cluster {
   permitCost    Decimal       @default(0) @db.Decimal(18, 2)
   pajakRate     Decimal       @db.Decimal(16, 12)
   retensiRate   Decimal       @default(0.10) @db.Decimal(16, 12)
+  /// Tanggal mulai implementasi (dari info "Implementasi: dd/mm/yyyy" atau diinput)
+  implementationDate DateTime? @db.Date
   sortOrder     Int           @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -606,6 +608,8 @@ model ImportMappingRule {
   method      AllocationMethod?
   /// [{ clusterId, pct }] untuk method MANUAL
   manualPcts  Json?
+  /// Filter penerima dinamis: IMPL_DATE_LE_EXPENSE = cluster dengan tanggal implementasi ≤ tanggal expense (kosong ikut)
+  clusterFilter String?
   category    ExpenseCategory?
   note        String?
   createdById String?
@@ -629,8 +633,12 @@ model ImportHeldItem {
   suggestedCategory ExpenseCategory?
   /// Usulan tujuan (JSON RabTarget) untuk form pelepasan
   suggestedTarget   Json?
+  /// EXPENSE (bisa dilepas jadi realisasi) | REVENUE (pendapatan/PO — tindak lanjut manual)
+  kind              String           @default("EXPENSE")
   /// HELD | RELEASED | DISMISSED
   status            String           @default("HELD")
+  /// untuk DISMISSED: DUPLICATE | SKIP
+  resolution        String?
   note              String?
   expenseId         String?
   resolvedById      String?
@@ -639,4 +647,12 @@ model ImportHeldItem {
   updatedAt         DateTime         @updatedAt
 
   @@index([projectId, status])
+}
+
+/// Patch data/keputusan yang dijalankan sekali (idempotent), mis. keputusan review import.
+model DataPatch {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  note      String?
+  appliedAt DateTime @default(now())
 }

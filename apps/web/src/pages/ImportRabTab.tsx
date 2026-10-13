@@ -17,7 +17,7 @@ import { formatPersen, formatTanggal, pctInputToRatio, ratioToPctInput } from '.
 
 type Target =
   | { scope: 'CLUSTER'; clusterId: string; clusterName: string }
-  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod }
+  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod; clusterFilter?: string | null }
   | { scope: 'SKIP' | 'HOLD' | 'DUPLICATE'; note: string | null };
 type Status = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED' | 'HELD' | 'DUPLICATE';
 interface Item {
@@ -319,7 +319,18 @@ export function ImportRabTab() {
                       {i.diffs.map((d) => <div key={d.field} className="text-[11px] text-slate-500">{d.field}: <s>{d.oldValue}</s> → {d.newValue}</div>)}
                     </td>
                     <td className="td">{i.category ? EXPENSE_CATEGORY_LABEL[i.category] : '—'}</td>
-                    <td className="td text-xs">{targetText(i.target)}{i.targetSource === 'RULE' && <span className="ml-1 text-slate-400">(keputusan tersimpan)</span>}</td>
+                    <td className="td max-w-[280px] whitespace-normal text-xs">
+                      {targetText(i.target)}
+                      {i.targetSource === 'RULE' && <span className="ml-1 text-slate-400">(keputusan tersimpan)</span>}
+                      {i.target?.scope === 'PROJECT' && (
+                        <details>
+                          <summary className="cursor-pointer text-brand">
+                            {i.target.clusterFilter === 'IMPL_DATE_LE_EXPENSE' ? 'Penerima (implementasi ≤ tanggal expense)' : 'Penerima'}: {i.target.clusterNames.length}
+                          </summary>
+                          <ul className="list-disc pl-4 text-[11px] text-slate-600">{i.target.clusterNames.map((n) => <li key={n}>{n}</li>)}</ul>
+                        </details>
+                      )}
+                    </td>
                     <td className="td num"><Money value={i.amount} plain /></td>
                     <td className="td"><span className={cx('rounded px-1.5 py-0.5 text-xs', STATUS_STYLE[i.status])}>{STATUS_LABEL[i.status]}</span></td>
                   </tr>
@@ -408,12 +419,16 @@ interface HeldItem {
   suggestedCategory: ExpenseCategory | null;
   suggestedTarget: Target | null;
   note: string | null;
+  kind: 'EXPENSE' | 'REVENUE';
+  resolution: 'DUPLICATE' | 'SKIP' | null;
 }
 
 /** Daftar "Ditahan — perlu konfirmasi": dilepas (pilih kategori & tujuan) atau ditandai lewati/duplikat tanpa import ulang. */
 export function HeldItemsPanel() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['held-items'], queryFn: () => api<HeldItem[]>('/import/held') });
+  const [tab, setTab] = useState<'HELD' | 'DISMISSED'>('HELD');
+  const q = useQuery({ queryKey: ['held-items', tab], queryFn: () => api<HeldItem[]>(`/import/held?status=${tab}`) });
+  const reopen = useMutation({ mutationFn: (id: string) => api(`/import/held/${id}/reopen`, { method: 'POST' }), onSuccess: () => qc.invalidateQueries() });
   const clusters = useQuery({ queryKey: ['clusters', 'all'], queryFn: () => api<{ id: string; name: string; projectId: string; status: string }[]>('/clusters') });
   const [open, setOpen] = useState<string | null>(null);
   const [decision, setDecision] = useState<RabDecision | undefined>();
@@ -436,12 +451,25 @@ export function HeldItemsPanel() {
     onSuccess: done,
   });
   const items = q.data ?? [];
-  if (!items.length) return null;
   return (
     <section className="card space-y-2 border-violet-200 p-4" aria-label="Ditahan — perlu konfirmasi">
-      <h2 className="font-semibold">Ditahan — perlu konfirmasi ({items.length})</h2>
-      <p className="text-xs text-slate-500">Item ini tidak diimpor. Lepas dengan memilih kategori & tujuan, atau tandai duplikat/lewati — tanpa perlu mengunggah ulang file.</p>
-      <ErrorBox error={release.error ? errorMessage(release.error) : dismiss.error ? errorMessage(dismiss.error) : null} />
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-semibold">Daftar keputusan import</h2>
+        <div className="ml-auto flex gap-1" role="tablist" aria-label="Status item">
+          {([['HELD', 'Ditahan — perlu konfirmasi'], ['DISMISSED', 'Duplikat & dilewati']] as const).map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={tab === k} onClick={() => { setTab(k); setOpen(null); }} className={cx('rounded-full border px-3 py-1 text-xs', tab === k ? 'border-brand bg-brand text-white' : 'bg-white text-slate-600')}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-slate-500">
+        {tab === 'HELD'
+          ? 'Item ini tidak diimpor. Lepas dengan memilih kategori & tujuan, atau tandai duplikat/lewati — tanpa perlu mengunggah ulang file.'
+          : 'Keputusan duplikat/lewati bisa dibatalkan — item kembali ke daftar ditahan.'}
+      </p>
+      {!items.length && <p className="text-sm text-slate-500">Tidak ada item.</p>}
+      <ErrorBox error={release.error ? errorMessage(release.error) : dismiss.error ? errorMessage(dismiss.error) : reopen.error ? errorMessage(reopen.error) : null} />
       {items.map((h) => {
         const cl = (clusters.data ?? []).filter((c) => c.projectId === h.projectId && c.status !== 'CANCELLED');
         const isOpen = open === h.id;
@@ -454,7 +482,12 @@ export function HeldItemsPanel() {
                 {h.note && <div className="mt-1 text-xs text-violet-700">{h.note}</div>}
               </div>
               <Money value={h.amount} className="font-semibold" />
-              {!isOpen && (
+              {h.kind === 'REVENUE' && <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-700">Pendapatan / PO — bukan biaya</span>}
+              {h.resolution && <span className="rounded bg-orange-50 px-1.5 py-0.5 text-[11px] text-orange-700">{h.resolution === 'DUPLICATE' ? 'Duplikat' : 'Dilewati'}</span>}
+              {tab === 'DISMISSED' && (
+                <button className="btn-secondary px-2 py-1 text-xs" disabled={reopen.isPending} onClick={() => reopen.mutate(h.id)}>Batalkan</button>
+              )}
+              {tab === 'HELD' && !isOpen && (
                 <button
                   className="btn-secondary px-2 py-1 text-xs"
                   onClick={() => {
@@ -472,19 +505,22 @@ export function HeldItemsPanel() {
             {isOpen && (
               <div className="mt-3 grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
-                  <select className="input" value={category} onChange={(e) => setCategory(e.target.value as ExpenseCategory | '')} aria-label="Kategori item ditahan">
+                  {h.kind === 'REVENUE' && <p className="text-xs text-sky-700">Item pendapatan tidak bisa diimpor sebagai biaya. Tindak lanjuti di budget cluster / termin klien, lalu tandai selesai (Lewati) dengan catatan.</p>}
+                  <select className="input" hidden={h.kind === 'REVENUE'} value={category} onChange={(e) => setCategory(e.target.value as ExpenseCategory | '')} aria-label="Kategori item ditahan">
                     <option value="">Pilih kategori…</option>
                     {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{EXPENSE_CATEGORY_LABEL[c]}</option>)}
                   </select>
                   <input className="input" placeholder="Catatan (opsional / alasan lewati)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Catatan item ditahan" />
                   <div className="flex flex-wrap gap-2">
-                    <button className="btn-primary" disabled={!category || release.isPending || (decision ? !manualPctValid(decision) : false)} onClick={() => release.mutate(h.id)}>Lepas & impor</button>
+                    {h.kind === 'EXPENSE' && (
+                      <button className="btn-primary" disabled={!category || release.isPending || (decision ? !manualPctValid(decision) : false)} onClick={() => release.mutate(h.id)}>Lepas & impor</button>
+                    )}
                     <button className="btn-secondary" disabled={note.trim().length < 3} onClick={() => dismiss.mutate({ id: h.id, scope: 'DUPLICATE' })}>Duplikat</button>
                     <button className="btn-secondary" disabled={note.trim().length < 3} onClick={() => dismiss.mutate({ id: h.id, scope: 'SKIP' })}>Lewati</button>
                     <button className="btn-ghost" onClick={() => setOpen(null)}>Batal</button>
                   </div>
                 </div>
-                <TargetEditor value={decision} onChange={setDecision} clusters={cl} allowHold={false} />
+                {h.kind === 'EXPENSE' && <TargetEditor value={decision} onChange={setDecision} clusters={cl} allowHold={false} />}
               </div>
             )}
           </div>

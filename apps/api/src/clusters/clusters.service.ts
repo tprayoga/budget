@@ -32,6 +32,7 @@ const CLUSTER_FIELDS = [
   'permitCost',
   'pajakRate',
   'retensiRate',
+  'implementationDate',
 ] as const;
 
 /** Representasi datar cluster untuk audit log (field → nilai string). */
@@ -159,6 +160,7 @@ export class ClustersService {
             permitCost: money(input.permitCost),
             pajakRate: rate(input.pajakRate ?? tpl.pajakRate),
             retensiRate: rate(input.retensiRate ?? tpl.retensiRate),
+            implementationDate: input.implementationDate ? new Date(`${input.implementationDate}T00:00:00Z`) : null,
             sortOrder: (max._max.sortOrder ?? -1) + 1,
             budgetLines: {
               create: lines.map((l, i) => ({ code: l.code, label: BUDGET_LABEL[l.code], sortOrder: i, ...lineData(l) })),
@@ -193,6 +195,9 @@ export class ClustersService {
         if (input.permitCost !== undefined) data.permitCost = money(input.permitCost);
         if (input.pajakRate !== undefined) data.pajakRate = rate(input.pajakRate);
         if (input.retensiRate !== undefined) data.retensiRate = rate(input.retensiRate);
+        if (input.implementationDate !== undefined) {
+          data.implementationDate = input.implementationDate ? new Date(`${input.implementationDate}T00:00:00Z`) : null;
+        }
         await tx.cluster.update({ where: { id }, data });
         await this.upsertLines(tx, id, input.lines ?? []);
         const after = (await this.load(id, tx))!;
@@ -240,6 +245,7 @@ export class ClustersService {
       permitCost: full.permitCost.toString(),
       pajakRate: full.pajakRate.toString(),
       retensiRate: full.retensiRate.toString(),
+      implementationDate: full.implementationDate ? full.implementationDate.toISOString().slice(0, 10) : null,
       lines: full.budgetLines.map((l) => ({
         code: l.code,
         mode: l.mode,

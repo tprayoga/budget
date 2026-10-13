@@ -83,6 +83,10 @@ export const clusterBaseSchema = z.object({
   permitCost: zNonNegDecimal.default('0'),
   pajakRate: zRate.optional(),
   retensiRate: zRate.optional(),
+  implementationDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD')
+    .nullish(),
 });
 export const clusterCreateSchema = clusterBaseSchema.extend({
   lines: z.array(budgetLineSchema).optional(),
@@ -298,6 +302,8 @@ export const rabDecisionSchema = z
     clusterIds: z.array(z.string()).optional(),
     method: z.enum(ALLOCATION_METHODS).nullish(),
     manualPcts: z.array(manualPctSchema).optional(),
+    /** IMPL_DATE_LE_EXPENSE: penerima = cluster dengan tanggal implementasi ≤ tanggal expense (kosong ikut) */
+    clusterFilter: z.enum(['IMPL_DATE_LE_EXPENSE']).nullish(),
     category: z.enum(EXPENSE_CATEGORIES).nullish(),
     note: z.string().trim().max(500).nullish(),
   })

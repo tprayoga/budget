@@ -154,6 +154,13 @@ export class ImportController {
     return this.held.release(user, id, body);
   }
 
+  @Post('held/:id/reopen')
+  @HttpCode(200)
+  @Roles('ADMIN', 'FINANCE')
+  reopen(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.held.reopen(user, id);
+  }
+
   @Post('held/:id/dismiss')
   @HttpCode(200)
   @Roles('ADMIN', 'FINANCE')

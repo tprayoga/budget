@@ -40,6 +40,7 @@ export function clusterDto(c: ClusterWithLines) {
     permitCost: s(c.permitCost)!,
     pajakRate: s(c.pajakRate)!,
     retensiRate: s(c.retensiRate)!,
+    implementationDate: c.implementationDate ? c.implementationDate.toISOString().slice(0, 10) : null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     lines: [...c.budgetLines]

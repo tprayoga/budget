@@ -7,6 +7,7 @@ import { AuditService } from '../src/audit/audit.service';
 import { BudgetImporter } from '../src/import/budget-importer';
 import { generateClientPayments } from '../src/realization/termin-generator';
 import { seedDefaultRabRules } from '../src/import/default-rab-rules';
+import { applyPatch22 } from '../src/import/patch-2-2';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -243,6 +244,8 @@ async function main() {
   if (termins) console.log(`Termin klien dibuat: ${termins}`);
   const rules = await seedDefaultRabRules(prisma, admin?.id ?? null);
   if (rules) console.log(`Aturan pemetaan import RAB default dibuat: ${rules}`);
+  const patch = await applyPatch22(prisma, audit, admin?.id ?? null);
+  if (patch.length) console.log(`Patch keputusan 2.2: ${patch.join('; ')}`);
 
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },

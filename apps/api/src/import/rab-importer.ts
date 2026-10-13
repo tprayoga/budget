@@ -11,7 +11,7 @@ export type ManualPct = { clusterId: string; pct: string };
 
 export type RabTarget =
   | { scope: 'CLUSTER'; clusterId: string; clusterName: string }
-  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod; manualPcts?: ManualPct[] }
+  | { scope: 'PROJECT'; clusterIds: string[]; clusterNames: string[]; method: AllocationMethod; manualPcts?: ManualPct[]; clusterFilter?: string | null }
   | { scope: 'SKIP' | 'HOLD' | 'DUPLICATE'; note: string | null };
 
 export type RabItemStatus = 'NEW' | 'CHANGED' | 'UNCHANGED' | 'NEEDS_MAPPING' | 'SKIPPED' | 'HELD' | 'DUPLICATE';
@@ -47,8 +47,12 @@ const isAllocTarget = (t: RabTarget | null): t is Extract<RabTarget, { scope: 'C
 
 /** Target dari aturan/keputusan; null bila tidak lengkap. */
 export function targetFromRule(
-  rule: Pick<ImportMappingRule, 'scope' | 'clusterId' | 'clusterIds' | 'method' | 'note'> & { manualPcts?: Prisma.JsonValue | ManualPct[] | null },
+  rule: Pick<ImportMappingRule, 'scope' | 'clusterId' | 'clusterIds' | 'method' | 'note'> & {
+    manualPcts?: Prisma.JsonValue | ManualPct[] | null;
+    clusterFilter?: string | null;
+  },
   clusters: Cluster[],
+  itemDate?: string | null,
 ): RabTarget | null {
   if (rule.scope === 'SKIP' || rule.scope === 'HOLD' || rule.scope === 'DUPLICATE') return { scope: rule.scope, note: rule.note ?? null };
   if (rule.scope === 'CLUSTER' && rule.clusterId) {
@@ -56,11 +60,22 @@ export function targetFromRule(
     return c ? { scope: 'CLUSTER', clusterId: c.id, clusterName: c.name } : null;
   }
   if (rule.scope === 'PROJECT') {
-    const list = rule.clusterIds.length ? clusters.filter((c) => rule.clusterIds.includes(c.id)) : clusters.filter((c) => c.status !== 'CANCELLED');
+    let list = rule.clusterIds.length ? clusters.filter((c) => rule.clusterIds.includes(c.id)) : clusters.filter((c) => c.status !== 'CANCELLED');
+    if (rule.clusterFilter === 'IMPL_DATE_LE_EXPENSE' && itemDate) {
+      // cluster yang sudah mulai implementasi pada tanggal expense; tanggal implementasi kosong ikut
+      list = list.filter((c) => !c.implementationDate || c.implementationDate.toISOString().slice(0, 10) <= itemDate);
+    }
     if (!list.length) return null;
     const method = rule.method ?? 'EQUAL';
     const manualPcts = method === 'MANUAL' ? ((rule.manualPcts as ManualPct[] | null) ?? []) : undefined;
-    return { scope: 'PROJECT', clusterIds: list.map((c) => c.id), clusterNames: list.map((c) => c.name), method, ...(manualPcts ? { manualPcts } : {}) };
+    return {
+      scope: 'PROJECT',
+      clusterIds: list.map((c) => c.id),
+      clusterNames: list.map((c) => c.name),
+      method,
+      ...(manualPcts ? { manualPcts } : {}),
+      ...(rule.clusterFilter ? { clusterFilter: rule.clusterFilter } : {}),
+    };
   }
   return null;
 }
@@ -121,8 +136,8 @@ export class RabImporter {
         const groupRule = rules.get(mk);
         let target: RabTarget | null = null;
         let targetSource: RabPreviewItem['targetSource'] = null;
-        if (itemRule && itemRule.scope !== 'INHERIT') target = targetFromRule(itemRule, clusters);
-        if (!target && groupRule && groupRule.scope !== 'INHERIT') target = targetFromRule(groupRule, clusters);
+        if (itemRule && itemRule.scope !== 'INHERIT') target = targetFromRule(itemRule, clusters, it.date);
+        if (!target && groupRule && groupRule.scope !== 'INHERIT') target = targetFromRule(groupRule, clusters, it.date);
         if (target) targetSource = 'RULE';
         if (!target && it.section === 'SUBCON' && it.blockTitle) {
           const match = byKey.get(clusterNameKey(it.blockTitle));
@@ -212,13 +227,15 @@ export class RabImporter {
     let created = 0;
     let updated = 0;
     let held = 0;
+    let dismissed = 0;
     // grup alokasi: semua item siap dalam satu mappingKey + target yang sama dialokasikan kumulatif
     const groups = new Map<string, RabPreviewItem[]>();
     for (const i of preview.items) {
       if (!['NEW', 'CHANGED', 'UNCHANGED'].includes(i.status)) continue;
       const t = i.target as Extract<RabTarget, { scope: 'CLUSTER' | 'PROJECT' }>;
+      // penerima dinamis per tanggal → dialokasikan per item
       const gk =
-        t.scope === 'PROJECT'
+        t.scope === 'PROJECT' && !t.clusterFilter
           ? `${i.mappingKey}|${[...t.clusterIds].sort().join(',')}|${t.method}|${JSON.stringify(t.manualPcts ?? [])}`
           : `item|${i.key}`;
       groups.set(gk, [...(groups.get(gk) ?? []), i]);
@@ -269,11 +286,25 @@ export class RabImporter {
           }
         }
 
-        // item ditahan → daftar "Ditahan — perlu konfirmasi" (data disimpan, bisa dilepas tanpa import ulang)
-        for (const it of preview.items.filter((i) => i.status === 'HELD')) {
+        // sinkron daftar ditahan:
+        //  - HELD → simpan data (bisa dilepas tanpa import ulang)
+        //  - DUPLICATE / SKIPPED → simpan sebagai DISMISSED (bisa dibatalkan)
+        //  - sudah terimpor (aturan berubah dari HOLD) → RELEASED
+        for (const it of preview.items) {
           const ref = sourceRefOf(it);
           const prev = await tx.importHeldItem.findUnique({ where: { sourceRef: ref } });
-          if (prev && prev.status !== 'HELD') continue;
+          if (['NEW', 'CHANGED', 'UNCHANGED'].includes(it.status)) {
+            if (prev && prev.status !== 'RELEASED') {
+              const e = await tx.expense.findUnique({ where: { sourceRef: ref } });
+              await tx.importHeldItem.update({ where: { id: prev.id }, data: { status: 'RELEASED', expenseId: e?.id ?? null, resolution: null, resolvedById: userId, resolvedAt: new Date() } });
+              await this.audit.diff(tx, userId, 'ImportHeldItem', prev.id, { status: prev.status }, { status: 'RELEASED', sumber: 'aturan import' });
+            }
+            continue;
+          }
+          if (!['HELD', 'DUPLICATE', 'SKIPPED'].includes(it.status)) continue;
+          const status = it.status === 'HELD' ? 'HELD' : 'DISMISSED';
+          const resolution = it.status === 'DUPLICATE' ? 'DUPLICATE' : it.status === 'SKIPPED' ? 'SKIP' : null;
+          if (prev?.status === 'RELEASED') continue;
           const data = {
             projectId: it.projectId!,
             sheet: it.sheet,
@@ -288,18 +319,25 @@ export class RabImporter {
             suggestedCategory: it.category ?? it.suggestedCategory,
             suggestedTarget: (it.suggestedTarget ?? undefined) as Prisma.InputJsonValue | undefined,
             note: it.note,
+            status,
+            resolution,
           };
-          if (prev) await tx.importHeldItem.update({ where: { id: prev.id }, data });
-          else {
+          if (prev) {
+            if (prev.status !== status || prev.resolution !== resolution || prev.note !== it.note) {
+              await this.audit.diff(tx, userId, 'ImportHeldItem', prev.id, { status: prev.status, resolution: prev.resolution }, { status, resolution });
+            }
+            await tx.importHeldItem.update({ where: { id: prev.id }, data });
+          } else {
             const h = await tx.importHeldItem.create({ data: { ...data, sourceRef: ref } });
-            await this.audit.diff(tx, userId, 'ImportHeldItem', h.id, null, { sourceRef: ref, amount: it.amount, status: 'HELD', note: it.note });
+            await this.audit.diff(tx, userId, 'ImportHeldItem', h.id, null, { sourceRef: ref, amount: it.amount, status, resolution, note: it.note });
           }
-          held++;
+          if (status === 'HELD') held++;
+          else dismissed++;
         }
       },
       { timeout: 180_000 },
     );
-    return { created, updated, held, preview: await this.preview(parsed, allowedProjectIds) };
+    return { created, updated, held, dismissed, preview: await this.preview(parsed, allowedProjectIds) };
   }
 }
 
@@ -320,6 +358,7 @@ export async function saveRule(
     clusterIds: alloc ? (d.clusterIds ?? []) : [],
     method: alloc ? (d.method ?? 'EQUAL') : null,
     manualPcts: alloc && d.method === 'MANUAL' ? ((d.manualPcts ?? []) as Prisma.InputJsonValue) : undefined,
+    clusterFilter: alloc ? (d.clusterFilter ?? null) : null,
     category: d.category ?? null,
     note: d.note ?? null,
     createdById: userId,

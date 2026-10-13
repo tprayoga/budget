@@ -19,22 +19,28 @@ test('Finance: import RAB (pemetaan manual OPS) & buku kas lewat UI', async ({ p
   await page.getByRole('tab', { name: 'RAB Realisasi' }).click();
   await page.getByLabel('File RAB').setInputFiles(RAB);
   await page.getByRole('button', { name: /Preview/ }).click();
-  // aturan default: OPS Evantama & CCSI Manado sudah terpetakan; 4 ditahan, 2 duplikat
-  await expect(page.getByRole('button', { name: 'Ditahan: 4' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Duplikat: 2' })).toBeVisible();
+  // aturan default + keputusan 2.2: semua terpetakan; 2 ditahan, 3 duplikat, 3 dilewati
+  await expect(page.getByRole('button', { name: 'Ditahan: 2' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Duplikat: 3' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Perlu dipetakan: 0' })).toBeVisible();
   await expect(page.getByTestId('rab-group').filter({ hasText: 'Cluster Sinagar & Kersanegara Tasik' })).toHaveCount(0);
   await page.screenshot({ path: path.join(SHOTS, 'import-rab.png') });
   await page.getByRole('button', { name: /^Commit/ }).click();
-  await expect(page.getByText(/Import selesai: \d+ realisasi baru, 0 diperbarui, 4 ditahan/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Import selesai: \d+ realisasi baru, 0 diperbarui, 2 ditahan/)).toBeVisible({ timeout: 30_000 });
 
-  // daftar ditahan: tandai "CCSI … Manado Sulut" (????) sebagai dilewati tanpa import ulang
+  // daftar ditahan: C58 (????), J31 (permit Semarang), SND Kalawiran (pendapatan)
   const held = page.getByTestId('held-item');
-  await expect(held).toHaveCount(4);
+  await expect(held).toHaveCount(3);
+  await expect(held.filter({ hasText: 'SND Kalawiran' })).toContainText('Pendapatan / PO — bukan biaya');
   const item = held.filter({ hasText: 'Manado Sulut' });
   await item.getByRole('button', { name: 'Tindak lanjut' }).click();
   await item.getByLabel('Catatan item ditahan').fill('Bukan biaya proyek');
   await item.getByRole('button', { name: 'Lewati' }).click();
-  await expect(page.getByTestId('held-item')).toHaveCount(3);
+  await expect(page.getByTestId('held-item')).toHaveCount(2);
+  // duplikat & dilewati bisa dilihat dan dibatalkan
+  await page.getByRole('tab', { name: 'Duplikat & dilewati' }).click();
+  await expect(page.getByTestId('held-item').filter({ hasText: 'Material FTTH CI Ngawi' })).toContainText('Duplikat');
+  await expect(page.getByTestId('held-item').filter({ hasText: 'Material FTTH CI Ngawi' }).getByRole('button', { name: 'Batalkan' })).toBeVisible();
 
   await page.getByRole('tab', { name: 'Buku Kas' }).click();
   await page.getByLabel('File buku kas').setInputFiles(RAB);

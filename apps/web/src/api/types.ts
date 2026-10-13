@@ -76,6 +76,7 @@ export interface Cluster {
   permitCost: string;
   pajakRate: string;
   retensiRate: string;
+  implementationDate?: string | null;
   lines: BudgetLine[];
 }
 

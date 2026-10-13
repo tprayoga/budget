@@ -196,3 +196,24 @@ Alokasi MANUAL di pemetaan import memakai persentase per cluster (Σ = 100%, dib
 
 Hitung ulang termin (nilai PO Batumpang diubah ke 26.000.000, termin 1 sudah PAID): termin 1 tetap, termin 2 =
 10% × 26.000.000 = 2.600.000, termin 3 = 26.000.000 − termin 1 − termin 2. Bila semua termin sudah ditagih → 409.
+
+## O. Fase 2.2 — keputusan review import (patch `2.2-keputusan-import`)
+
+Dites di `apps/api/test/realization.e2e-spec.ts` dan `budget.e2e-spec.ts`.
+
+| Keputusan | Hasil yang dites |
+|---|---|
+| ADW C79 → duplikat (bisa dibatalkan) | status DUPLICATE + catatan; "Batalkan" → HELD; diputuskan lagi → DUPLICATE |
+| ADW C81 → SUBCON_MATERIAL pro-rata 2 cluster Mangunsari Pemalang | Σ alokasi 4.971.400 ke 2 cluster |
+| CCSI D36 Allowance 5.551.950 → pos Allowance, pro-rata nilaiPoImpl | Satu grup kumulatif dengan jasa Manado (D35, D36, D37, D38) |
+| CCSI permit Manado | nilaiPoPermit Kalawiran 10.212.800 / Karondoran 12.176.000; permitCost = realisasi permit **10.035.446,29 / 11.964.553,71** (22.000.000 pro-rata nilai permit, sisa pembulatan ke Karondoran); audit `alasan` = "permit pass-through dari sheet CCSI"; termin PERMIT 1 × 100% INVOICED (INV-RAA/001 & 002/IX/2026) |
+| SND Kalawiran 4.373.496 | Daftar ditahan, jenis REVENUE (tidak bisa dilepas jadi biaya) |
+| PJD Evantama 10 item | semua ke Cluster Sinagar Tasik: pos Allowance Sinagar = **13.775.000** |
+| ADW "Alloawance CJ Ngawi" 10.000.000 | pro-rata 5 cluster TEPAS NGAWI |
+| ADW PJD C67 (25/05), C68 (17/06), C70 (13/08) | pro-rata ke cluster dengan tanggal implementasi ≤ tanggal expense (kosong ikut): **10 / 10 / 19** cluster |
+| CCSI Site Semarang | Term 1 7.445.482 & Allowance 2.812.450 → Padangsari; Biaya Permit 36.000.000 **ditahan** |
+| Import ulang | NEW 0, CHANGED 0 |
+
+Total CCSI di rekap (acuan C + permit Manado), dengan interest 10% dan retensiAsCost = true:
+nilaiProyek 136.073.359 + 22.388.800 = **158.462.159**. Profit −1.871.953 − (22.000.000 + pajak 559.720 + interest
+2.255.972 − 22.388.800) = **−4.298.845**. Acuan C level parser (file Excel) tidak berubah.
