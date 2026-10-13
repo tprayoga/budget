@@ -43,7 +43,10 @@ export function moneyStr(v: Num): string {
   return roundMoney(v).toFixed(2);
 }
 
-/** Serialisasi persentase/rasio dengan 8 desimal (Decimal(12,8) di DB). */
+/** Presisi rasio di DB: Decimal(16,12). */
+export const RATE_DP = 12;
+
+/** Serialisasi persentase/rasio (12 desimal, sesuai kolom DB). */
 export function rateStr(v: Num): string {
-  return roundHalfUp(v, 8).toFixed(8);
+  return roundHalfUp(v, RATE_DP).toFixed(RATE_DP);
 }

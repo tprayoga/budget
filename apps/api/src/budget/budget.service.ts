@@ -86,10 +86,7 @@ export class BudgetService {
       out.push({
         project: { id: p.id, code: p.code, name: p.name, year: p.year, client: p.client },
         setting,
-        clusters: p.clusters.map((c, i) => {
-          const { lines: _lines, ...rest } = clusterDto(c);
-          return { ...rest, calc: clusterResultToDto(results[i]) };
-        }),
+        clusters: p.clusters.map((c, i) => ({ ...clusterDto(c), calc: clusterResultToDto(results[i]) })),
         total: projectTotalToDto(calcProjectTotal(results)),
       });
     }

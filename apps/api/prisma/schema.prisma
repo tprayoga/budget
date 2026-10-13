@@ -1,5 +1,5 @@
 // Indotek Project Budget System — Fase 1
-// Uang: Decimal(18,2). Rasio/persen: Decimal(12,8) (0.025 = 2,5%).
+// Uang: Decimal(18,2). Rasio/persen: Decimal(16,12) (0.025 = 2,5%) — cukup presisi agar konversi Rp→% tidak menggeser rupiah.
 
 generator client {
   provider      = "prisma-client-js"
@@ -169,7 +169,7 @@ model ProjectMember {
 model Setting {
   id            String   @id @default(cuid())
   projectId     String?  @unique
-  interestRate  Decimal? @db.Decimal(12, 8)
+  interestRate  Decimal? @db.Decimal(16, 12)
   retensiAsCost Boolean?
   rekeningBank  String?
   rekeningNo    String?
@@ -182,8 +182,8 @@ model Setting {
 model BudgetTemplate {
   id          String               @id @default(cuid())
   projectId   String?              @unique
-  pajakRate   Decimal?             @db.Decimal(12, 8)
-  retensiRate Decimal?             @db.Decimal(12, 8)
+  pajakRate   Decimal?             @db.Decimal(16, 12)
+  retensiRate Decimal?             @db.Decimal(16, 12)
   updatedAt   DateTime             @updatedAt
   project     Project?             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   lines       BudgetTemplateLine[]
@@ -194,7 +194,7 @@ model BudgetTemplateLine {
   templateId String
   code       BudgetCode
   mode       LineMode       @default(PCT)
-  pct        Decimal?       @db.Decimal(12, 8)
+  pct        Decimal?       @db.Decimal(16, 12)
   amount     Decimal?       @db.Decimal(18, 2)
   template   BudgetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
@@ -211,8 +211,8 @@ model Cluster {
   nilaiPoImpl   Decimal       @db.Decimal(18, 2)
   nilaiPoPermit Decimal       @default(0) @db.Decimal(18, 2)
   permitCost    Decimal       @default(0) @db.Decimal(18, 2)
-  pajakRate     Decimal       @db.Decimal(12, 8)
-  retensiRate   Decimal       @default(0.10) @db.Decimal(12, 8)
+  pajakRate     Decimal       @db.Decimal(16, 12)
+  retensiRate   Decimal       @default(0.10) @db.Decimal(16, 12)
   sortOrder     Int           @default(0)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -231,7 +231,7 @@ model BudgetLine {
   code      BudgetCode
   label     String
   mode      LineMode
-  pct       Decimal?   @db.Decimal(12, 8)
+  pct       Decimal?   @db.Decimal(16, 12)
   amount    Decimal?   @db.Decimal(18, 2)
   sortOrder Int
   cluster   Cluster    @relation(fields: [clusterId], references: [id], onDelete: Cascade)
@@ -268,12 +268,12 @@ model FundRequest {
 
   // Snapshot (dibekukan saat SUBMIT; selama DRAFT ikut budget/setting terkini)
   nilaiProyek   Decimal @db.Decimal(18, 2)
-  interestRate  Decimal @db.Decimal(12, 8)
+  interestRate  Decimal @db.Decimal(16, 12)
   retensiAsCost Boolean
   infoBunga     Decimal @db.Decimal(18, 2)
   infoRetensi   Decimal @db.Decimal(18, 2)
   infoProfit    Decimal @db.Decimal(18, 2)
-  infoMargin    Decimal @db.Decimal(12, 8)
+  infoMargin    Decimal @db.Decimal(16, 12)
   totalDiajukan Decimal @db.Decimal(18, 2)
 
   submittedAt           DateTime?
@@ -303,8 +303,8 @@ model FundRequestLine {
   budgetCode            FrCode
   label                 String
   budgetAmount          Decimal     @db.Decimal(18, 2)
-  pctNilaiProyek        Decimal     @db.Decimal(12, 8)
-  pctCair               Decimal     @default(1) @db.Decimal(12, 8)
+  pctNilaiProyek        Decimal     @db.Decimal(16, 12)
+  pctCair               Decimal     @default(1) @db.Decimal(16, 12)
   diajukan              Decimal     @db.Decimal(18, 2)
   sudahDicairkanSebelum Decimal     @default(0) @db.Decimal(18, 2)
   sedangDiproses        Decimal     @default(0) @db.Decimal(18, 2)

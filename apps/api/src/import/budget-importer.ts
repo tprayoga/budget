@@ -6,6 +6,7 @@ import {
   calcCluster,
   dec,
   moneyStr,
+  RATE_DP,
 } from '@indotek/shared';
 import { parseBudgetWorkbook, type ParsedCluster, type ParsedWorkbook } from '@indotek/shared/xlsx';
 import type { AuditService } from '../audit/audit.service';
@@ -95,13 +96,13 @@ function flatDb(c: DbCluster): Record<string, string | null> {
 }
 
 /**
- * Pembanding nilai setelah pembulatan penyimpanan (uang 2 desimal, rasio 8 desimal),
+ * Pembanding nilai setelah pembulatan penyimpanan (uang 2 desimal, rasio RATE_DP desimal),
  * agar file yang sama tidak dianggap berubah hanya karena presisi float Excel.
  */
 function storedForm(field: string, v: string | null): string | null {
   if (v === null || !/^-?\d/.test(v)) return v;
   const isRate = field === 'pajakRate' || field === 'retensiRate' || field.endsWith('.pct');
-  return dec(v).toDecimalPlaces(isRate ? 8 : 2).toString();
+  return dec(v).toDecimalPlaces(isRate ? RATE_DP : 2).toString();
 }
 
 /**
