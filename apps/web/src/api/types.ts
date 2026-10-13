@@ -5,6 +5,7 @@ import type {
   ExpenseCategory,
   ExpenseSource,
   ExpenseStatus,
+  PoKind,
   TerminKind,
 } from '@indotek/shared';
 import type {
@@ -52,6 +53,8 @@ export interface EffectiveSetting {
   rekeningBank: string | null;
   rekeningNo: string | null;
   rekeningNama: string | null;
+  realisasiWarnPct?: string;
+  realisasiOverPct?: string;
   overridden: string[];
 }
 
@@ -92,10 +95,43 @@ export interface ProjectBudget {
   total: CalcSummaryDto;
 }
 
+export interface OverrunItem {
+  clusterId: string;
+  clusterName: string;
+  projectId: string;
+  projectCode: string;
+  code: FrCode | 'TOTAL';
+  label: string;
+  budget: string;
+  realisasi: string;
+  pctTerpakai: string;
+  threshold: string;
+}
+
 export interface Rekap {
   global: EffectiveSetting;
   projects: ProjectBudget[];
   grandTotal: CalcSummaryDto;
+  overBudget?: OverrunItem[];
+}
+
+export interface ClusterPo {
+  id: string;
+  clusterId: string;
+  kind: PoKind;
+  poNumber: string | null;
+  poDate: string | null;
+  amount: string;
+  passThroughCost: string;
+  note: string | null;
+  sourceRef: string | null;
+}
+
+export interface FieldOverrideInfo {
+  field: string;
+  userId: string | null;
+  reason: string | null;
+  at: string;
 }
 
 export interface UsageRow {
@@ -111,6 +147,8 @@ export interface ClusterDetail extends ClusterWithCalc {
   project: { id: string; code: string; name: string; client: Client };
   setting: EffectiveSetting;
   usage: UsageRow[];
+  pos: ClusterPo[];
+  overrides: FieldOverrideInfo[];
   nextTerminKe: number;
   fundRequests: {
     id: string;
@@ -304,6 +342,10 @@ export interface ClusterRealization {
 export interface ClientPayment {
   id: string;
   clusterId: string;
+  poId: string | null;
+  fromTemplate: boolean;
+  /** Termin sudah ditagih / punya no. invoice / manual, tetapi tanggal invoice kosong. */
+  needsInvoiceDate: boolean;
   kind: TerminKind;
   termin: number;
   pct: string | null;
@@ -318,9 +360,51 @@ export interface ClientPayment {
   status: ClientPaymentStatus;
 }
 
+export interface ClientInvoiceRef {
+  id: string;
+  sourceRef: string;
+  clusterId: string | null;
+  blockTitle: string | null;
+  termin: number | null;
+  invoiceNo: string;
+  netAmount: string | null;
+  dueDate: string | null;
+  statusText: string | null;
+  paid: boolean;
+  appliedPaymentId: string | null;
+  appliedAt: string | null;
+}
+
 export interface ClientPaymentsResponse {
+  pos: ClusterPo[];
   payments: ClientPayment[];
   templates: { kind: TerminKind; agingDays: number | null; agingType: AgingType | null; lines: number }[];
+  invoiceRefs: ClientInvoiceRef[];
+  missingInvoiceDate: number;
+}
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  key: string;
+  title: string;
+  body: string;
+  link: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface MissingInvoiceDate {
+  id: string;
+  clusterId: string;
+  clusterName: string;
+  projectCode: string;
+  kind: TerminKind;
+  termin: number;
+  poNumber: string | null;
+  invoiceNo: string | null;
+  amount: string;
+  status: ClientPaymentStatus;
 }
 
 export interface FrUsage {

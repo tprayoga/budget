@@ -50,6 +50,7 @@ const ROWS: RowDef[] = [
   ...COST_PROJECT_CODES.map((code): RowDef => ({ key: code, label: BUDGET_LABEL[code], kind: 'line', code })),
   { key: 'outflow', label: 'Outflow', kind: 'calc', rp: (c) => c.outflow, pct: (c) => div(c.outflow, c.nilaiProyek), strong: true },
   { key: 'profit', label: 'Profit', kind: 'calc', rp: (c) => c.profit, pct: (c) => c.margin, strong: true },
+  { key: 'marginPermit', label: 'Margin permit', kind: 'calc', rp: (c) => c.marginPermit },
 ];
 
 interface ColData {
@@ -370,23 +371,12 @@ function GridCell({ row, col, editable, update }: { row: RowDef; col: ColData; e
         </div>
       );
     case 'field-rp': {
+      // Fase 2.3: diturunkan dari tabel PO cluster — hanya tampil (ubah lewat detail cluster)
       const value = c[row.field];
       return (
-        <div>
-          <EditableValue
-            disabled={!editable}
-            mode="rp"
-            ariaLabel={`${row.label} ${c.name}`}
-            initial={formatAngka(value)}
-            display={<Num v={value} className="font-medium" />}
-            onCommit={(v) => {
-              const parsed = rpInputToValue(v);
-              if (parsed === null || Number(parsed) < 0) return false;
-              update(c.id, (x) => setField(x, row.field as ClusterField, parsed));
-              return true;
-            }}
-          />
-          {row.pct && <P v={row.pct(col.calc)} />}
+        <div title="Diturunkan dari tabel PO — ubah di detail cluster">
+          <Num v={value} className="font-medium" />
+          {row.pct && <div><P v={row.pct(col.calc)} /></div>}
         </div>
       );
     }

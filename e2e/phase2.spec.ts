@@ -9,7 +9,7 @@ test.describe.configure({ mode: 'serial' });
 
 async function openCluster(page: import('@playwright/test').Page, name: string, tab: 'realisasi' | 'termin') {
   await page.goto('/rekap');
-  await page.getByRole('link', { name, exact: true }).click();
+  await page.getByRole('link', { name, exact: true }).first().click();
   await page.getByRole('tab', { name: tab === 'realisasi' ? 'Realisasi' : 'Termin Klien' }).click();
 }
 
@@ -19,24 +19,17 @@ test('Finance: import RAB (pemetaan manual OPS) & buku kas lewat UI', async ({ p
   await page.getByRole('tab', { name: 'RAB Realisasi' }).click();
   await page.getByLabel('File RAB').setInputFiles(RAB);
   await page.getByRole('button', { name: /Preview/ }).click();
-  // aturan default + keputusan 2.2: semua terpetakan; 2 ditahan, 3 duplikat, 3 dilewati
-  await expect(page.getByRole('button', { name: 'Ditahan: 2' })).toBeVisible();
+  // aturan default + keputusan 2.2 & 2.3: semua terpetakan; 0 ditahan, 3 duplikat, 3 dilewati
+  await expect(page.getByRole('button', { name: 'Ditahan: 0' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Duplikat: 3' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Perlu dipetakan: 0' })).toBeVisible();
   await expect(page.getByTestId('rab-group').filter({ hasText: 'Cluster Sinagar & Kersanegara Tasik' })).toHaveCount(0);
   await page.screenshot({ path: path.join(SHOTS, 'import-rab.png') });
   await page.getByRole('button', { name: /^Commit/ }).click();
-  await expect(page.getByText(/Import selesai: \d+ realisasi baru, 0 diperbarui, 2 ditahan/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Import selesai: \d+ realisasi baru, 0 diperbarui, 0 ditahan/)).toBeVisible({ timeout: 30_000 });
 
-  // daftar ditahan: C58 (????), J31 (permit Semarang), SND Kalawiran (pendapatan)
-  const held = page.getByTestId('held-item');
-  await expect(held).toHaveCount(3);
-  await expect(held.filter({ hasText: 'SND Kalawiran' })).toContainText('Pendapatan / PO — bukan biaya');
-  const item = held.filter({ hasText: 'Manado Sulut' });
-  await item.getByRole('button', { name: 'Tindak lanjut' }).click();
-  await item.getByLabel('Catatan item ditahan').fill('Bukan biaya proyek');
-  await item.getByRole('button', { name: 'Lewati' }).click();
-  await expect(page.getByTestId('held-item')).toHaveCount(2);
+  // keputusan 2.3: daftar ditahan kosong (SND → PO, J31 → permit Semarang, C58 → fee marketing)
+  await expect(page.getByTestId('held-item')).toHaveCount(0);
   // duplikat & dilewati bisa dilihat dan dibatalkan
   await page.getByRole('tab', { name: 'Duplikat & dilewati' }).click();
   await expect(page.getByTestId('held-item').filter({ hasText: 'Material FTTH CI Ngawi' })).toContainText('Duplikat');
@@ -69,7 +62,7 @@ test('Termin klien: bayar kurang dari bruto → potongan jadi realisasi PAJAK', 
   await dialog.getByLabel('Nominal diterima').fill('8.000.000');
   await expect(dialog.getByText(/akan dicatat sebagai realisasi PAJAK/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Simpan' }).click();
-  const row = page.getByRole('row', { name: /Impl\. 1/ });
+  const row = page.getByTestId('po-group-IMPLEMENTASI').getByRole('row', { name: /Termin 1/ });
   await expect(row).toContainText('Dibayar');
   await expect(row).toContainText('16 Oktober 2026'); // jatuh tempo 30 hari kalender
   await page.screenshot({ path: path.join(SHOTS, 'termin-klien.png') });
@@ -119,4 +112,67 @@ test('Buku kas & rekonsiliasi per bulan', async ({ page }) => {
   await expect(page.getByRole('row', { name: /^Juli 2026/ })).toBeVisible();
   await expect(page.getByRole('row', { name: /^TOTAL/ }).first()).toBeVisible();
   await page.screenshot({ path: path.join(SHOTS, 'buku-kas.png') });
+});
+
+test('PO cluster: tambah Addwork → nilai PO implementasi & termin 100% (badge tanggal invoice)', async ({ page }) => {
+  await login(page, 'pm');
+  await page.goto('/rekap');
+  await page.getByRole('link', { name: 'WANASARI RW 02 SUBANG', exact: true }).first().click();
+  const po = page.getByRole('region', { name: 'PO cluster' });
+  await expect(po.getByRole('row', { name: /^Implementasi/ })).toContainText('13.949.300');
+  await po.getByRole('button', { name: 'Tambah PO' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Nilai PO').fill('-100');
+  await dialog.getByRole('button', { name: 'Simpan' }).click();
+  await expect(dialog.getByText('Nilai PO tidak boleh negatif')).toBeVisible();
+  await dialog.getByLabel('Nilai PO').fill('500.000');
+  await dialog.getByRole('button', { name: 'Simpan' }).click();
+  await expect(po.getByRole('row', { name: /^Addwork/ })).toContainText('500.000');
+  await expect(po.getByRole('row', { name: /Nilai PO Implementasi/ })).toContainText('14.449.300');
+  await expect(page.getByLabel('Nilai PO Implementasi (Rp)')).toHaveValue('14.449.300');
+  await page.screenshot({ path: path.join(SHOTS, 'cluster-po.png'), fullPage: true });
+  await page.getByRole('tab', { name: 'Termin Klien' }).click();
+  await expect(page.getByTestId('po-group-ADDWORK')).toContainText('500.000');
+  await expect(page.getByTestId('po-group-ADDWORK').getByTestId('badge-tanggal-invoice')).toBeVisible();
+  // bersihkan
+  await page.getByRole('tab', { name: 'Budget' }).click();
+  page.once('dialog', (d) => void d.accept());
+  await po.getByRole('button', { name: /Hapus PO Addwork/ }).click();
+  await expect(po.getByRole('row', { name: /^Addwork/ })).toHaveCount(0);
+});
+
+test('Termin klien: badge tanggal invoice (permit Semarang), inbox FINANCE, terapkan referensi RAB', async ({ page }) => {
+  await login(page, 'finance');
+  await expect(page.getByTestId('inbox-missing-badge').first()).toBeVisible();
+  await page.goto('/inbox');
+  const missing = page.getByRole('region', { name: 'Termin tanpa tanggal invoice' });
+  await expect(missing.getByRole('row', { name: /Padangsari RW 12 & 13/ })).toBeVisible();
+  await expect(missing.getByRole('row', { name: /Kalawiran Kakas Barat/ })).toHaveCount(2); // permit (2.2) + SND (2.3)
+  await expect(missing.getByRole('row', { name: /Kalawiran Kakas Barat.*SND/ })).toContainText('INV-RAA/003/IX/2026');
+  await missing.getByRole('link', { name: 'Padangsari RW 12 & 13 (Semarang)' }).click();
+  await expect(page.getByTestId('po-group-PERMIT').getByTestId('badge-tanggal-invoice')).toBeVisible();
+  await expect(page.getByTestId('po-group-PERMIT')).toContainText('36.000.000');
+
+  await openCluster(page, 'Cluster Sinagar Tasik', 'termin');
+  const refs = page.getByRole('region', { name: 'Referensi tagihan RAB' });
+  const ref = refs.getByRole('row', { name: /I2628-00139/ });
+  await expect(ref).toContainText('20.044.750');
+  await ref.getByRole('button', { name: 'Terapkan ke termin…' }).click();
+  const dialog = page.getByRole('dialog');
+  const target = dialog.getByLabel('Termin tujuan');
+  await target.selectOption((await target.locator('option', { hasText: /PO Permit.*termin 1 / }).getAttribute('value'))!);
+  await dialog.getByLabel('Nilai bruto').fill('20.500.000');
+  await dialog.getByLabel('Tanggal diterima').fill('2026-09-30'); // referensi tidak punya jatuh tempo → wajib diisi
+  await expect(dialog).toContainText('455.250'); // potongan → PAJAK
+  await page.screenshot({ path: path.join(SHOTS, 'terapkan-referensi.png') });
+  await dialog.getByRole('button', { name: 'Terapkan' }).click();
+  await expect(ref).toContainText('Diterapkan');
+  await expect(page.getByTestId('po-group-PERMIT').getByRole('row', { name: /Termin 1/ })).toContainText('Dibayar');
+});
+
+test('Notifikasi: lonceng tersedia untuk PM', async ({ page }) => {
+  await login(page, 'pm');
+  await page.goto('/rekap');
+  await page.getByRole('button', { name: /^Notifikasi/ }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Daftar notifikasi' })).toBeVisible();
 });

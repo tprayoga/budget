@@ -37,16 +37,24 @@ export function CategoryMappingSection() {
   );
 }
 
-export function WarnPctSection({ value }: { value: string | null | undefined }) {
+export function WarnPctSection({ value, overValue }: { value: string | null | undefined; overValue?: string | null }) {
   const { can } = useAuth();
   const qc = useQueryClient();
   const [v, setV] = useState(ratioToPctInput(value ?? '0.8'));
+  const [over, setOver] = useState(ratioToPctInput(overValue ?? '1'));
   useEffect(() => setV(ratioToPctInput(value ?? '0.8')), [value]);
-  const save = useMutation({ mutationFn: () => api('/settings/global', { method: 'PUT', json: { realisasiWarnPct: pctInputToRatio(v) } }), onSuccess: () => qc.invalidateQueries() });
+  useEffect(() => setOver(ratioToPctInput(overValue ?? '1')), [overValue]);
+  const save = useMutation({
+    mutationFn: () => api('/settings/global', { method: 'PUT', json: { realisasiWarnPct: pctInputToRatio(v), realisasiOverPct: pctInputToRatio(over) } }),
+    onSuccess: () => qc.invalidateQueries(),
+  });
   return (
-    <div className="flex items-end gap-2">
+    <div className="flex flex-wrap items-end gap-2">
       <Field label="Ambang kuning realisasi (%)" hint="Merah bila > 100%.">
         <input className="input w-32" inputMode="decimal" value={v} disabled={!can('ADMIN')} onChange={(e) => setV(e.target.value)} />
+      </Field>
+      <Field label="Ambang notifikasi over budget (%)" hint="Notifikasi PM & Direktur + daftar di Rekap.">
+        <input className="input w-32" inputMode="decimal" value={over} disabled={!can('ADMIN')} onChange={(e) => setOver(e.target.value)} aria-label="Ambang over budget" />
       </Field>
       {can('ADMIN') && <button className="btn-secondary mb-0.5" disabled={save.isPending} onClick={() => save.mutate()}>Simpan</button>}
       <ErrorBox error={save.error ? errorMessage(save.error) : null} />

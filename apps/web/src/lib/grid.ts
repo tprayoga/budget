@@ -37,11 +37,9 @@ export function setField(c: Cluster, field: ClusterField, value: string): Cluste
 }
 
 /** Payload PATCH /clusters/:id dari cluster hasil edit. */
+/** Payload simpan grid. Nilai PO & biaya permit tidak dikirim — diturunkan dari tabel PO cluster (Fase 2.3). */
 export function toUpdatePayload(c: Cluster) {
   return {
-    nilaiPoImpl: c.nilaiPoImpl,
-    nilaiPoPermit: c.nilaiPoPermit,
-    permitCost: c.permitCost,
     pajakRate: c.pajakRate,
     retensiRate: c.retensiRate,
     lines: c.lines.map((l) => ({ code: l.code, mode: l.mode, pct: l.mode === 'PCT' ? l.pct ?? '0' : null, amount: l.mode === 'RP' ? l.amount ?? '0' : null })),

@@ -31,25 +31,29 @@ test('Login pertama wajib ganti password; sesi di cookie httpOnly, tidak ada tok
   expect(await page.evaluate(() => document.cookie)).not.toContain('access_token');
 });
 
-test('Rekap: total project, filter, preview asumsi tanpa simpan', async ({ page }) => {
+test('Rekap: default retensi = piutang, margin permit, preview acuan C (retensi biaya) tanpa simpan', async ({ page }) => {
   await login(page, 'pm');
   const adwTotal = page.getByRole('row', { name: /TOTAL ADW/ });
   await expect(adwTotal).toContainText('716.165.700');
-  await expect(adwTotal).toContainText('-7.815.037');
-  await expect(page.getByRole('row', { name: /TOTAL EVANTAMA/ })).toContainText('-12.759.106');
-  // CCSI termasuk permit Manado (keputusan 2.2): acuan C −1.871.953 − 2.426.892
-  await expect(page.getByRole('row', { name: /TOTAL CCSI/ })).toContainText('-4.298.845');
+  const wanasari = page.getByRole('row', { name: /WANASARI RW 01 SUBANG/ });
+  // default 2.3: retensiAsCost = false → WANASARI RW 01 profit 961.865,20
+  await expect(wanasari).toContainText('961.865');
+  // margin permit Semarang (pass-through 36.000.000): −900.000 pajak − 3.600.000 interest
+  await expect(page.getByRole('row', { name: /Padangsari RW 12 & 13 \(Semarang\)/ })).toContainText('-4.500.000');
+  await expect(page.getByRole('region', { name: 'Cluster over budget' })).toBeVisible();
   await page.screenshot({ path: path.join(SHOTS, 'rekap.png'), fullPage: false });
 
-  // Acceptance B lewat preview (PM tidak bisa menyimpan)
-  const wanasari = page.getByRole('row', { name: /WANASARI RW 01 SUBANG/ });
-  await expect(wanasari).toContainText('-76.628');
+  // Acceptance C lewat preview retensiAsCost = true (PM tidak bisa menyimpan)
   await page.getByRole('switch', { name: /Retensi dihitung sebagai biaya/ }).click();
-  await expect(wanasari).toContainText('961.865');
   await expect(page.getByText('Mode preview — belum disimpan.')).toBeVisible();
+  await expect(wanasari).toContainText('-76.628');
+  await expect(adwTotal).toContainText('-7.815.037');
+  await expect(page.getByRole('row', { name: /TOTAL EVANTAMA/ })).toContainText('-12.759.106');
+  // CCSI: acuan C + permit Manado (2.2) + SND Kalawiran + permit Semarang (2.3)
+  await expect(page.getByRole('row', { name: /TOTAL CCSI/ })).toContainText('-4.635.620');
   await expect(page.getByRole('button', { name: 'Simpan' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Batalkan preview' }).click();
-  await expect(wanasari).toContainText('-76.628');
+  await expect(wanasari).toContainText('961.865');
 
   await page.getByPlaceholder('Cari cluster / PO / SPK…').fill('sinagar');
   await expect(page.getByRole('row', { name: /Cluster Sinagar Tasik/ })).toBeVisible();

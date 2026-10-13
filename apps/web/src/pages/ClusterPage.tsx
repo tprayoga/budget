@@ -20,7 +20,9 @@ import { ErrorBox, Field, Modal, Money, PageHeader, Pct, Spinner, StatusBadge, c
 import { calcClusterLocal } from '../lib/budget';
 import { formatAngka, formatTanggal, pctInputToRatio, ratioToPctInput, rpInputToValue } from '../lib/format';
 import { toUpdatePayload } from '../lib/grid';
-import { ClientPaymentsTab, ClusterRealizationTab } from '../components/realization';
+import { ClusterRealizationTab } from '../components/realization';
+import { ClientPaymentsTab } from '../components/ClientPaymentsTab';
+import { ClusterPoTable } from '../components/ClusterPoTable';
 
 const rp = z.string().refine((v) => rpInputToValue(v) !== null, 'Angka tidak valid');
 const pct = z.string().refine((v) => pctInputToRatio(v) !== null, 'Persen tidak valid');
@@ -262,9 +264,9 @@ export function ClusterPage() {
                   <option value="">—</option><option value="IBK">IBK</option><option value="TELCO">TELCO</option>
                 </select>
               </Field>
-              <Field label="Nilai PO Implementasi (Rp)" error={form.formState.errors.nilaiPoImpl?.message}><input className="input text-right" inputMode="decimal" {...form.register('nilaiPoImpl')} /></Field>
-              <Field label="Nilai PO Permit (Rp)" error={form.formState.errors.nilaiPoPermit?.message}><input className="input text-right" inputMode="decimal" {...form.register('nilaiPoPermit')} /></Field>
-              <Field label="Biaya Permit (Rp)" error={form.formState.errors.permitCost?.message}><input className="input text-right" inputMode="decimal" {...form.register('permitCost')} /></Field>
+              <Field label="Nilai PO Implementasi (Rp)" hint="Dari tabel PO"><input className="input bg-slate-50 text-right" readOnly tabIndex={-1} {...form.register('nilaiPoImpl')} /></Field>
+              <Field label="Nilai PO Permit (Rp)" hint="Dari tabel PO (permit + SND)"><input className="input bg-slate-50 text-right" readOnly tabIndex={-1} {...form.register('nilaiPoPermit')} /></Field>
+              <Field label="Biaya Permit (Rp)" hint="Σ biaya pass-through PO"><input className="input bg-slate-50 text-right" readOnly tabIndex={-1} {...form.register('permitCost')} /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Pajak (%)" error={form.formState.errors.pajakRate?.message}><input className="input text-right" inputMode="decimal" {...form.register('pajakRate')} /></Field>
                 <Field label="Retensi (%)" error={form.formState.errors.retensiRate?.message}><input className="input text-right" inputMode="decimal" {...form.register('retensiRate')} /></Field>
@@ -307,6 +309,11 @@ export function ClusterPage() {
             </div>
           )}
           <ErrorBox error={save.error ? errorMessage(save.error) : null} />
+          {c.overrides.length > 0 && (
+            <p className="text-[11px] text-slate-500">
+              Dilindungi dari import budget Excel (diedit di aplikasi): {c.overrides.map((o) => o.field).join(', ')}
+            </p>
+          )}
         </form>
 
         <div className="min-w-0 space-y-4">
@@ -319,6 +326,12 @@ export function ClusterPage() {
               <dt className="text-slate-500">Cost project</dt><dd className="text-right"><Money value={live.costProject} /></dd>
               <dt className="text-slate-500">Outflow</dt><dd className="text-right"><Money value={live.outflow} /></dd>
               <dt className="font-semibold">Margin</dt><dd className="text-right font-semibold"><Pct value={live.margin} /></dd>
+              {Number(live.nilaiPoPermit) !== 0 || Number(live.permit.amount) !== 0 ? (
+                <>
+                  <dt className="text-slate-500" title="Nilai PO permit − biaya permit − pajak atas permit − interest atas biaya permit">Margin permit</dt>
+                  <dd className={cx('text-right font-semibold', Number(live.marginPermit) < 0 && 'text-red-600')} data-testid="margin-permit"><Money value={live.marginPermit} /></dd>
+                </>
+              ) : null}
             </dl>
             <p className="mt-2 text-[11px] text-slate-500">
               Interest {ratioToPctInput(c.setting.interestRate)}% × dana investor · retensi {c.setting.retensiAsCost ? 'dihitung sebagai biaya' : 'tidak dihitung sebagai biaya'}
@@ -342,6 +355,10 @@ export function ClusterPage() {
             </table>
           </section>
         </div>
+      </div>
+
+      <div className={cx('mt-4', tab !== 'budget' && 'hidden')}>
+        <ClusterPoTable clusterId={c.id} pos={c.pos} editable={editable} />
       </div>
 
       <section className={cx('card mt-4 overflow-hidden', tab !== 'budget' && 'hidden')}>

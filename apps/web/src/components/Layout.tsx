@@ -4,12 +4,18 @@ import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { ROLE_LABEL } from '@indotek/shared';
 import { api } from '../api/client';
-import type { Inbox as InboxT } from '../api/types';
+import type { Inbox as InboxT, MissingInvoiceDate } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { cx } from './ui';
+import { NotificationBell } from './NotificationBell';
 
 export function useInbox() {
   return useQuery({ queryKey: ['inbox'], queryFn: () => api<InboxT>('/fund-requests/inbox'), refetchInterval: 60_000 });
+}
+
+/** Termin klien tanpa tanggal invoice (bagian inbox FINANCE). */
+export function useMissingInvoiceDates(enabled: boolean) {
+  return useQuery({ queryKey: ['missing-invoice-dates'], queryFn: () => api<MissingInvoiceDate[]>('/inbox/missing-invoice-dates'), enabled, refetchInterval: 60_000 });
 }
 
 function Badge({ n, testId }: { n?: number; testId?: string }) {
@@ -30,13 +36,16 @@ export function Layout() {
   const { user, logout, can } = useAuth();
   const inbox = useInbox();
   const pending = usePendingExpenses(can('FINANCE'));
+  const missing = useMissingInvoiceDates(can('FINANCE'));
   const [open, setOpen] = useState(false);
   const count = inbox.data?.count;
+  // FINANCE: termin tanpa tanggal invoice dihitung di inbox (badge kuning terpisah dari approval)
+  const missingCount = can('FINANCE') ? missing.data?.length : undefined;
 
   const nav = [
     { to: '/rekap', label: 'Rekap', icon: LayoutGrid, show: true },
     { to: '/pengajuan', label: 'Pengajuan Dana', icon: FileText, show: true },
-    { to: '/inbox', label: 'Inbox Approval', icon: Inbox, show: true, badge: count },
+    { to: '/inbox', label: 'Inbox Approval', icon: Inbox, show: true, badge: count, warn: missingCount },
     { to: '/realisasi', label: 'Realisasi', icon: Receipt, show: true, badge: can('FINANCE') ? pending.data?.count : undefined },
     { to: '/buku-kas', label: 'Buku Kas', icon: BookOpen, show: can('ADMIN', 'FINANCE', 'DIREKTUR', 'PM') },
     { to: '/import', label: 'Import Excel', icon: Upload, show: can('ADMIN', 'PM', 'FINANCE') },
@@ -58,11 +67,17 @@ export function Layout() {
           <div className="text-sm font-bold text-white">Indotek Budget</div>
           <div className="text-[11px] text-blue-200">PT Indotek Buana Karya</div>
         </div>
+        <div className="ml-auto hidden lg:block"><NotificationBell /></div>
       </div>
       <nav className="flex-1 space-y-1">
         {nav.map((n) => (
           <NavLink key={n.to} to={n.to} className={link} onClick={() => setOpen(false)}>
             <n.icon className="h-4 w-4" /> {n.label} <Badge n={n.badge} testId={n.to === '/inbox' ? 'inbox-badge' : `badge-${n.to.slice(1)}`} />
+            {'warn' in n && !!n.warn && (
+              <span data-testid="inbox-missing-badge" title="Termin klien: tanggal invoice belum diisi" className={cx('min-w-5 rounded-full bg-amber-400 px-1.5 text-center text-[11px] font-bold leading-5 text-amber-950', !n.badge && 'ml-auto')}>
+                {n.warn}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>
@@ -99,6 +114,7 @@ export function Layout() {
           </button>
           <span className="font-bold text-brand">Indotek Budget</span>
           <span className="ml-auto text-xs text-slate-500">{user && ROLE_LABEL[user.role]}</span>
+          <NotificationBell tone="light" />
         </header>
         <main className="mx-auto max-w-[1600px] px-4 pb-24 pt-4 sm:px-6 lg:pb-8 lg:pt-6">
           <Outlet />

@@ -49,7 +49,7 @@ describe('grid edit', () => {
     const r = calcClusterLocal(base, A);
     const c = toggleLineMode(base, 'SUBCON', r);
     expect(c.lines.find((l) => l.code === 'SUBCON')!.mode).toBe('PCT');
-    const back = toggleLineMode(c, 'SUBCON', calcCluster({ ...toUpdatePayload(c), ...A }));
+    const back = toggleLineMode(c, 'SUBCON', calcCluster({ ...c, ...toUpdatePayload(c), ...A }));
     expect(back.lines.find((l) => l.code === 'SUBCON')!.amount).toBe('6952900');
     expect(calcClusterLocal(back, A).profit.toFixed(2)).toBe('-76628.30');
   });
@@ -60,6 +60,8 @@ describe('grid edit', () => {
     const p = toUpdatePayload(c);
     expect(p.lines.find((l) => l.code === 'INDIRECT')).toEqual({ code: 'INDIRECT', mode: 'PCT', pct: '0.02', amount: null });
     expect(isClusterChanged(base, { ...base })).toBe(false);
+    // nilai PO diturunkan dari tabel PO → tidak ikut payload grid
+    expect(p).not.toHaveProperty('nilaiPoImpl');
   });
 });
 

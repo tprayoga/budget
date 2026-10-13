@@ -1,16 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Paperclip, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ALLOCATION_METHOD_LABEL,
   ALLOCATION_METHODS,
   BUDGET_LABEL,
-  CLIENT_PAYMENT_STATUS_LABEL,
   EXPENSE_CATEGORIES,
   EXPENSE_CATEGORY_LABEL,
   EXPENSE_STATUS_LABEL,
   FR_CODES,
-  paymentDeduction,
   todayJakartaIso,
   type AllocationMethod,
   type ExpenseCategory,
@@ -18,7 +16,7 @@ import {
   type FrCode,
 } from '@indotek/shared';
 import { api, download, errorMessage } from '../api/client';
-import type { ClientPaymentsResponse, ClusterRealization, Expense } from '../api/types';
+import type { ClusterRealization, Expense } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { compressImage } from '../lib/image';
 import { formatAngka, formatPersen, formatTanggal, rpInputToValue } from '../lib/format';
@@ -37,8 +35,8 @@ export function ExpenseStatusBadge({ status }: { status: ExpenseStatus }) {
 const LEVEL_ROW: Record<'ok' | 'warn' | 'over', string> = { ok: '', warn: 'bg-amber-50', over: 'bg-red-50' };
 const LEVEL_TEXT: Record<'ok' | 'warn' | 'over', string> = { ok: 'text-slate-700', warn: 'text-amber-700 font-semibold', over: 'text-red-700 font-bold' };
 
-function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
-  for (const k of ['expenses', 'realization', 'cluster', 'rekap', 'client-payments', 'expense-pending', 'fund-request', 'fr-usage']) {
+export function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
+  for (const k of ['expenses', 'realization', 'cluster', 'rekap', 'client-payments', 'expense-pending', 'fund-request', 'fr-usage', 'missing-invoice-dates', 'notifications']) {
     void qc.invalidateQueries({ queryKey: [k] });
   }
 }
@@ -346,190 +344,3 @@ export function ExpenseFormModal({
     </Modal>
   );
 }
-
-// ------------------------------------------------------------------ tab Termin Klien
-
-export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
-  const { can } = useAuth();
-  const editable = can('ADMIN', 'FINANCE');
-  const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['client-payments', clusterId], queryFn: () => api<ClientPaymentsResponse>(`/clusters/${clusterId}/client-payments`) });
-  const [edit, setEdit] = useState<ClientPaymentsResponse['payments'][number] | null>(null);
-  const [form, setForm] = useState({ amount: '', invoiceNo: '', invoiceDate: '', dueDate: '', paidDate: '', paidAmount: '' });
-  const [addOpen, setAddOpen] = useState(false);
-  const [add, setAdd] = useState({ kind: 'IMPLEMENTASI', termin: '1', amount: '', keterangan: '' });
-  const save = useMutation({
-    mutationFn: () =>
-      api(`/client-payments/${edit!.id}`, {
-        method: 'PATCH',
-        json: {
-          amount: rpInputToValue(form.amount) ?? undefined,
-          invoiceNo: form.invoiceNo || null,
-          invoiceDate: form.invoiceDate || null,
-          dueDate: form.dueDate || null,
-          paidDate: form.paidDate || null,
-          paidAmount: form.paidAmount ? rpInputToValue(form.paidAmount) : null,
-        },
-      }),
-    onSuccess: () => {
-      setEdit(null);
-      invalidateAll(qc);
-    },
-  });
-  const create = useMutation({
-    mutationFn: () => api(`/clusters/${clusterId}/client-payments`, { method: 'POST', json: { kind: add.kind, termin: Number(add.termin), amount: rpInputToValue(add.amount) ?? '0', keterangan: add.keterangan || null } }),
-    onSuccess: () => { setAddOpen(false); invalidateAll(qc); },
-  });
-  type Recalc = { kinds: { kind: string; base: string; target: string; lockedSum: string; error: string | null; diffs: { id: string | null; termin: number; status: string; oldAmount: string | null; newAmount: string; changed: boolean }[] }[] };
-  const [recalc, setRecalc] = useState<Recalc | null>(null);
-  const preview = useMutation({ mutationFn: () => api<Recalc>(`/clusters/${clusterId}/client-payments/recalculate`), onSuccess: setRecalc });
-  const applyRecalc = useMutation({
-    mutationFn: () => api(`/clusters/${clusterId}/client-payments/recalculate`, { method: 'POST' }),
-    onSuccess: () => { setRecalc(null); invalidateAll(qc); },
-  });
-  if (q.isLoading) return <Spinner />;
-  if (q.error) return <ErrorBox error={q.error} />;
-  const { payments, templates } = q.data!;
-  const today = todayJakartaIso();
-  const aging = (kind: string) => templates.find((t) => t.kind === kind);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
-        <span>
-          {templates.length
-            ? templates.map((t) => `${t.kind === 'PERMIT' ? 'Permit' : 'Implementasi'}: ${t.lines} termin${t.agingDays != null ? `, jatuh tempo ${t.agingDays} hari ${t.agingType === 'WORKING' ? 'kerja' : 'kalender'}` : ''}`).join(' · ')
-            : 'Client ini belum punya template termin — input manual.'}
-        </span>
-        {editable && (
-          <div className="flex gap-2">
-            {templates.length > 0 && (
-              <button className="btn-secondary px-2 py-1 text-xs" disabled={preview.isPending} onClick={() => preview.mutate()}>
-                <RefreshCw className="h-3.5 w-3.5" /> Hitung ulang termin
-              </button>
-            )}
-            <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAddOpen(true)}><Plus className="h-3.5 w-3.5" /> Termin manual</button>
-          </div>
-        )}
-      </div>
-      <ErrorBox error={preview.error ? errorMessage(preview.error) : null} />
-      <div className="card overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50"><tr><th className="th">Termin</th><th className="th num">Bruto</th><th className="th">Invoice</th><th className="th">Jatuh tempo</th><th className="th num">Diterima</th><th className="th num">Potongan (PAJAK)</th><th className="th">Status</th><th className="th" /></tr></thead>
-          <tbody>
-            {payments.map((p) => {
-              const overdue = p.status === 'INVOICED' && p.dueDate && p.dueDate < today;
-              return (
-                <tr key={p.id} className={cx('border-t', overdue && 'bg-red-50')}>
-                  <td className="td whitespace-normal"><b>{p.kind === 'PERMIT' ? 'Permit' : 'Impl.'} {p.termin}</b>{p.pct && <span className="text-slate-500"> · {formatPersen(p.pct, 0)}</span>}<div className="text-[11px] text-slate-500">{p.keterangan}</div></td>
-                  <td className="td num"><Money value={p.amount} plain /></td>
-                  <td className="td">{p.invoiceNo ?? '—'}<div className="text-[11px] text-slate-500">{formatTanggal(p.invoiceDate)}</div></td>
-                  <td className={cx('td', overdue && 'font-semibold text-red-700')}>{p.dueDate ? formatTanggal(p.dueDate) : '—'}{overdue && <div className="text-[11px]">Terlambat</div>}</td>
-                  <td className="td num">{p.paidAmount ? <Money value={p.paidAmount} plain /> : '—'}<div className="text-[11px] text-slate-500">{formatTanggal(p.paidDate)}</div></td>
-                  <td className="td num">{Number(p.potongan) ? <Money value={p.potongan} plain /> : '—'}</td>
-                  <td className="td"><span className={cx('rounded px-1.5 py-0.5 text-xs', p.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' : p.status === 'INVOICED' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600')}>{CLIENT_PAYMENT_STATUS_LABEL[p.status]}</span></td>
-                  <td className="td">
-                    {editable && (
-                      <button
-                        className="btn-ghost p-1"
-                        aria-label={`Ubah termin ${p.kind} ${p.termin}`}
-                        onClick={() => {
-                          setEdit(p);
-                          setForm({ amount: formatAngka(p.amount, 2).replace(/,00$/, ''), invoiceNo: p.invoiceNo ?? '', invoiceDate: p.invoiceDate ?? '', dueDate: p.dueDate ?? '', paidDate: p.paidDate ?? '', paidAmount: p.paidAmount ? formatAngka(p.paidAmount, 2).replace(/,00$/, '') : '' });
-                        }}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {!payments.length && <tr><td colSpan={8} className="td text-center text-slate-500">Belum ada termin.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-slate-500">Bila nominal diterima lebih kecil dari bruto, selisihnya otomatis dicatat sebagai realisasi PAJAK (terverifikasi). Profit realisasi memakai nilai bruto termin yang sudah dibayar.</p>
-
-      <Modal
-        open={!!edit}
-        title={edit ? `Termin ${edit.kind === 'PERMIT' ? 'permit' : 'implementasi'} ${edit.termin}` : ''}
-        onClose={() => setEdit(null)}
-        footer={<><button className="btn-secondary" onClick={() => setEdit(null)}>Batal</button><button className="btn-primary" disabled={save.isPending} onClick={() => save.mutate()}>Simpan</button></>}
-      >
-        <ErrorBox error={save.error ? errorMessage(save.error) : null} />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Nilai bruto (Rp)"><input className="input text-right" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></Field>
-          <Field label="No. invoice"><input className="input" value={form.invoiceNo} onChange={(e) => setForm({ ...form, invoiceNo: e.target.value })} /></Field>
-          <Field label="Tanggal invoice"><input type="date" className="input" value={form.invoiceDate} onChange={(e) => setForm({ ...form, invoiceDate: e.target.value })} /></Field>
-          <Field label="Jatuh tempo" hint={edit && aging(edit.kind)?.agingDays != null ? 'Dihitung otomatis dari template' : 'Isi manual'}>
-            <input type="date" className="input" value={form.dueDate} disabled={!!(edit && aging(edit.kind)?.agingDays != null)} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
-          </Field>
-          <Field label="Tanggal dibayar"><input type="date" className="input" value={form.paidDate} onChange={(e) => setForm({ ...form, paidDate: e.target.value })} aria-label="Tanggal dibayar" /></Field>
-          <Field label="Nominal diterima (Rp)"><input className="input text-right" inputMode="decimal" value={form.paidAmount} onChange={(e) => setForm({ ...form, paidAmount: e.target.value })} aria-label="Nominal diterima" /></Field>
-        </div>
-        {(() => {
-          const pot = paymentDeduction(rpInputToValue(form.amount) ?? '0', rpInputToValue(form.paidAmount));
-          return pot.gt(0) ? <p className="text-xs text-amber-700">Potongan <Money value={pot.toString()} /> akan dicatat sebagai realisasi PAJAK.</p> : null;
-        })()}
-      </Modal>
-      <Modal
-        open={!!recalc}
-        title="Hitung ulang termin (nilai PO terkini)"
-        onClose={() => setRecalc(null)}
-        footer={
-          <>
-            <button className="btn-secondary" onClick={() => setRecalc(null)}>Batal</button>
-            <button
-              className="btn-primary"
-              disabled={applyRecalc.isPending || !recalc || recalc.kinds.some((k) => k.error) || !recalc.kinds.some((k) => k.diffs.some((d) => d.changed))}
-              onClick={() => applyRecalc.mutate()}
-            >
-              Terapkan
-            </button>
-          </>
-        }
-      >
-        <p className="text-xs text-slate-500">Termin yang sudah ditagih/dibayar tidak berubah. Selisih masuk ke termin belum ditagih yang terakhir.</p>
-        <ErrorBox error={applyRecalc.error ? errorMessage(applyRecalc.error) : null} />
-        {recalc?.kinds.map((k) => (
-          <div key={k.kind} className="space-y-1" data-testid={`recalc-${k.kind}`}>
-            <div className="text-sm font-semibold">
-              {k.kind === 'PERMIT' ? 'Permit' : 'Implementasi'} — target <Money value={k.target} /> <span className="font-normal text-slate-500">(nilai PO <Money value={k.base} />)</span>
-            </div>
-            {k.error && <p className="text-xs text-red-600">{k.error}</p>}
-            <table className="w-full text-xs">
-              <thead><tr><th className="th">Termin</th><th className="th">Status</th><th className="th num">Sebelum</th><th className="th num">Sesudah</th></tr></thead>
-              <tbody>
-                {k.diffs.map((d) => (
-                  <tr key={d.termin} className={cx('border-t', d.changed && 'bg-accent-50 font-semibold')}>
-                    <td className="td">{d.termin}</td>
-                    <td className="td">{d.status === 'BARU' ? 'Baru' : CLIENT_PAYMENT_STATUS_LABEL[d.status as keyof typeof CLIENT_PAYMENT_STATUS_LABEL]}</td>
-                    <td className="td num">{d.oldAmount ? <Money value={d.oldAmount} plain /> : '—'}</td>
-                    <td className="td num"><Money value={d.newAmount} plain /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
-        {recalc && !recalc.kinds.some((k) => k.diffs.some((d) => d.changed)) && <p className="text-sm text-emerald-700">Tidak ada perubahan — termin sudah sesuai nilai PO.</p>}
-      </Modal>
-      <Modal
-        open={addOpen}
-        title="Tambah termin manual"
-        onClose={() => setAddOpen(false)}
-        footer={<><button className="btn-secondary" onClick={() => setAddOpen(false)}>Batal</button><button className="btn-primary" disabled={create.isPending || !add.amount} onClick={() => create.mutate()}>Simpan</button></>}
-      >
-        <ErrorBox error={create.error ? errorMessage(create.error) : null} />
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Jenis"><select className="input" value={add.kind} onChange={(e) => setAdd({ ...add, kind: e.target.value })}><option value="IMPLEMENTASI">Implementasi</option><option value="PERMIT">Permit</option></select></Field>
-          <Field label="Termin ke-"><input className="input" inputMode="numeric" value={add.termin} onChange={(e) => setAdd({ ...add, termin: e.target.value })} /></Field>
-          <Field label="Bruto (Rp)"><input className="input text-right" value={add.amount} onChange={(e) => setAdd({ ...add, amount: e.target.value })} /></Field>
-        </div>
-        <Field label="Keterangan"><input className="input" value={add.keterangan} onChange={(e) => setAdd({ ...add, keterangan: e.target.value })} /></Field>
-      </Modal>
-    </div>
-  );
-}
-

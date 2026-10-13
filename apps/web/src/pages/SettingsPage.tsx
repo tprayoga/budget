@@ -9,7 +9,7 @@ import { ErrorBox, Field, PageHeader, Spinner, Toggle } from '../components/ui';
 import { pctInputToRatio, ratioToPctInput } from '../lib/format';
 import { ApiKeySection, CategoryMappingSection, HolidaySection, TerminTemplateSection, WarnPctSection } from '../components/SettingsRealization';
 
-interface GlobalSetting { interestRate: string; retensiAsCost: boolean; rekeningBank: string | null; rekeningNo: string | null; rekeningNama: string | null; realisasiWarnPct: string | null }
+interface GlobalSetting { interestRate: string; retensiAsCost: boolean; rekeningBank: string | null; rekeningNo: string | null; rekeningNama: string | null; realisasiWarnPct: string | null; realisasiOverPct: string | null }
 interface Template { effective: { pajakRate: string; retensiRate: string; lines: { code: BudgetLineCode; mode: 'PCT' | 'RP'; pct: string | null; amount: string | null }[] } }
 
 export function SettingsPage() {
@@ -84,7 +84,7 @@ export function SettingsPage() {
       </section>
 
       <h2 className="pt-2 text-lg font-bold">Realisasi & termin klien</h2>
-      <section className="card p-4"><WarnPctSection value={s.data?.realisasiWarnPct} /></section>
+      <section className="card p-4"><WarnPctSection value={s.data?.realisasiWarnPct} overValue={s.data?.realisasiOverPct} /></section>
       <CategoryMappingSection />
       <TerminTemplateSection />
       <HolidaySection />

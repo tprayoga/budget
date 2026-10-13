@@ -161,6 +161,7 @@ export function RekapPage() {
               <th className="th num hidden sm:table-cell">Outflow</th>
               <th className="th num">Profit</th>
               <th className="th num">Margin</th>
+              <th className="th num hidden lg:table-cell" title="Nilai PO permit − biaya permit − pajak atas permit − interest atas biaya permit">Margin permit</th>
               <th className="th num hidden xl:table-cell" title="Realisasi biaya terverifikasi">Realisasi</th>
               <th className="th num hidden xl:table-cell" title="Pembayaran klien (bruto) − realisasi biaya">Profit realisasi</th>
             </tr>
@@ -185,6 +186,7 @@ export function RekapPage() {
                   <td className="td num hidden sm:table-cell"><Money value={p.total.outflow} plain /></td>
                   <td className="td num"><Money value={p.total.profit} plain /></td>
                   <td className="td num"><Pct value={p.total.margin} /></td>
+                  <td className="td num hidden lg:table-cell"><Money value={p.total.marginPermit} plain /></td>
                   <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'realisasiBiaya')} plain /></td>
                   <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'profitRealisasi')} plain /></td>
                 </tr>
@@ -203,12 +205,13 @@ export function RekapPage() {
                     <td className="td num hidden sm:table-cell"><Money value={c.calc.outflow} plain /></td>
                     <td className="td num"><Money value={c.calc.profit} plain /></td>
                     <td className="td num"><Pct value={c.calc.margin} /></td>
+                    <td className="td num hidden lg:table-cell">{Number(c.calc.nilaiPoPermit) || Number(c.calc.permit.amount) ? <Money value={c.calc.marginPermit} plain /> : <span className="text-slate-300">—</span>}</td>
                     <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.realisasiBiaya ?? null} plain /></td>
                     <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.profitRealisasi ?? null} plain /></td>
                   </tr>
                 ))}
                 {isFiltered && !p.rows.length && (
-                  <tr><td colSpan={10} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
+                  <tr><td colSpan={11} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
                 )}
               </Fragment>
             ))}
@@ -216,6 +219,32 @@ export function RekapPage() {
         </table>
       </div>
       <p className="mt-2 text-xs text-slate-500">Baris TOTAL selalu menjumlah semua cluster project (tidak terpengaruh filter).</p>
+
+      <section className="card mt-4 overflow-x-auto" aria-label="Cluster over budget">
+        <div className="border-b px-4 py-3">
+          <h2 className="font-semibold">Cluster over budget</h2>
+          <p className="text-xs text-slate-500">Pos / total cluster dengan realisasi terverifikasi melewati ambang (Setting: realisasi over).</p>
+        </div>
+        {q.data?.overBudget?.length ? (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50"><tr><th className="th">Project</th><th className="th">Cluster</th><th className="th">Pos</th><th className="th num">Budget</th><th className="th num">Realisasi</th><th className="th num">Terpakai</th></tr></thead>
+            <tbody>
+              {q.data.overBudget.map((o) => (
+                <tr key={`${o.clusterId}-${o.code}`} className={cx('border-t', o.code === 'TOTAL' && 'bg-red-50 font-semibold')}>
+                  <td className="td">{o.projectCode}</td>
+                  <td className="td"><Link to={`/clusters/${o.clusterId}?tab=realisasi`} className="text-brand hover:underline">{o.clusterName}</Link></td>
+                  <td className="td">{o.label}</td>
+                  <td className="td num"><Money value={o.budget} plain /></td>
+                  <td className="td num text-red-700"><Money value={o.realisasi} plain /></td>
+                  <td className="td num font-semibold text-red-700">{Number(o.budget) ? <Pct value={o.pctTerpakai} decimals={1} /> : 'budget 0'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="px-4 py-6 text-center text-sm text-slate-500">Tidak ada cluster yang melewati ambang.</p>
+        )}
+      </section>
     </div>
   );
 }
