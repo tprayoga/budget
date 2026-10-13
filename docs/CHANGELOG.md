@@ -1,5 +1,95 @@
 # Changelog
 
+## Fase 2.1 — Aturan import default, daftar ditahan, hitung ulang termin (14 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 108 lulus |
+| Test API (Jest + PostgreSQL) | 70 lulus (+4: aturan default, ditahan/lepas/lewati, MANUAL %, hitung ulang termin) |
+| Test web | 9 lulus |
+| Playwright e2e | 11 lulus (import RAB sekali jalan, lewati item ditahan dari UI, dialog hitung ulang termin) |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| Import RAB end-to-end di DB Docker | 132 realisasi dibuat, 4 ditahan; import ulang tanpa perubahan |
+
+### Keputusan review Fase 2 (diterapkan)
+
+- Disetujui tanpa perubahan: pembulatan kumulatif, tagihan klien RAB sebagai referensi, tanggal "Week" → tanggal 1 + label, dan expense hasil import langsung terverifikasi.
+- Mapping manual dijadikan **aturan default** `ImportMappingRule` (seed insert-only, cluster dicari berdasarkan nama). Ada 22 aturan; detailnya di ACCEPTANCE bagian N.
+
+### Hasil cek duplikat ADW baris 78–81
+
+| Sel | Item | Hasil cek | Status |
+|---|---|---|---|
+| C78 | Pembelian Material Tepas Ngawi 4.275.000 (10/08) | Tidak ada di Total Material ADW. Tetapi tanggal & nominal sama persis dengan buku kas **"Pembelian Material Kersanegara RW 08 Tasikmalaya" (EVANTAMA)**, dan nominal itu sudah masuk `EVANTAMA!M42 = 91000+4275000` (Total Material Kersanagara RW 08). | **Duplikat** (lintas project) |
+| C79 | Material FTTH CI Ngawi 18.386.500 | Tidak ada sebagai item tunggal. Lima sel "Material Ngawi" (Y38, AC38, AG38, AK38, AO38) berisi angka hardcode berjumlah **20.814.181,21**, mendekati pro-rata 18.386.500 + "Tmbhn Material Tepas Ngawi" 2.425.000 = 20.811.500 (selisih 2.681,21). | **Ditahan** — kemungkinan besar duplikat. Bila diimpor, material Ngawi terhitung ±18,4 juta dua kali. |
+| C80 | Material Cluster Wonosobo 4.390.600 | **= BI38 2.959.400 + BM37 1.431.200**, yaitu item material di Total Material 2 cluster GUNUNGTAWANG WONOSOBO. | **Duplikat** |
+| C81 | Material FTTH 4.971.400 (22/08) | Tidak cocok dengan item atau kombinasi material mana pun. Buku kas mencatatnya sebagai "Material FTTH (DS & SF Desa Mangunsari **Pemalang**)". | **Ditahan** (sesuai instruksi) |
+
+Dari empat item, hanya C79 yang menyimpang dari instruksi awal Anda. Instruksinya: bila bukan duplikat, impor PRO_RATA ke 5 cluster Ngawi. C79 saya tahan karena buktinya kuat sebagai duplikat walau angkanya tidak sama persis. Bila Anda pastikan bukan duplikat, lepas dari daftar ditahan (usulan tujuan sudah terisi: kategori SUBCON_MATERIAL).
+
+### Hasil import RAB end-to-end (DB Docker, aturan default, tanpa keputusan tambahan)
+
+| Project | Total realisasi terverifikasi | Terimpor | Dilewati | Ditahan | Duplikat | Masih perlu dipetakan |
+|---|---|---|---|---|---|---|
+| EVANTAMA | Rp 127.400.619 | 24 | 3 (Rp 4.320.000) | 0 | 0 | 10 — daftar Biaya PJD (Rp 13.775.000) |
+| ADW | Rp 352.011.886 | 97 | 0 | 2 (Rp 23.357.900) | 2 (Rp 8.665.600) | 4 — "Biaya OPS" berisi PJD/Allowance (Rp 18.470.000) |
+| CCSI | Rp 56.155.766 | 11 | 0 | 2 (Rp 26.000.000) | 0 | 3 — Site Semarang (Rp 46.257.932) |
+
+Cluster dengan % terpakai tertinggi (realisasi terverifikasi / total budget pos):
+
+- **EVANTAMA** (hanya 3 cluster):
+  1. Sinagar 67,1% (86.215.593 / 128.468.016)
+  2. Kersanagara RW 08 63,0%
+  3. Kersanagara RW 04 40,5%
+- **ADW:**
+  1. Distribusi Kel Karangmulyo **94,3%**
+  2. Subfeeder TEPAS RW 05 Ngawi 90,7%
+  3. Pulling Distribusi Mangunsari Pemalang 87,5%
+  4. Subfeeder TEPAS RW 07 Ngawi 84,3%
+  5. Distribusi TEPAS RW 05 Ngawi-REV 82,6%
+- **CCSI** (hanya 3 cluster):
+  1. Karondoran (Manado) 74,9%
+  2. Kalawiran (Manado) 66,2%
+  3. Padangsari (Semarang) 0% (blok Semarang belum dipetakan)
+
+Data Docker sekarang berisi realisasi hasil import ini.
+
+### Yang dibuat
+
+- **(a) Hitung ulang termin**
+  - Endpoint: `GET /clusters/:id/client-payments/recalculate` (preview diff) dan `POST` (terapkan; ADMIN/FINANCE).
+  - Aturan: termin INVOICED/PAID tidak berubah, termin UNBILLED dihitung dari persentase template, dan **termin UNBILLED terakhir menampung selisih** sehingga Σ termin = Σpct × nilai PO terkini. Termin template yang belum ada dibuat.
+  - Bila semua termin sudah ditagih, atau nilai PO baru lebih kecil dari yang sudah ditagih → error.
+  - UI: tombol "Hitung ulang termin" di tab Termin Klien, membuka dialog konfirmasi berisi diff sebelum → sesudah. Semua perubahan tercatat di audit.
+- **(b) Alokasi MANUAL di form pemetaan import:** persentase per cluster (Σ harus 100%), dialokasikan kumulatif. Disimpan di aturan (`manualPcts`).
+- **(c) Daftar "Ditahan — perlu konfirmasi"**
+  - Keputusan baru `HOLD` dan `DUPLICATE` (selain `SKIP`), ditambah catatan.
+  - Item ditahan disimpan di tabel `ImportHeldItem` beserta datanya. Item bisa **dilepas** (pilih kategori + tujuan, termasuk MANUAL %) atau ditandai lewati/duplikat **tanpa import ulang**.
+  - Pelepasan memperbarui aturan, sehingga import berikutnya UNCHANGED.
+  - Preview import menampilkan status Ditahan/Duplikat/Dilewati beserta catatannya.
+- **Catatan expense:** kolom `Expense.note` (mis. kasbon "kasbon — perlu penyelesaian"), ditampilkan di daftar realisasi.
+- **Script CLI** `apps/api/scripts/import-rab.ts` (dry-run/commit + laporan per project).
+
+### Asumsi
+
+1. **CCSI D36 "Allowance Doc SND & Mob Demob" (5.551.950)** saya anggap sebagai "biaya operasional site" dan dibagi **EQUAL** sesuai instruksi (2.775.975 per cluster), dengan kategori PJD sehingga masuk pos **Allowance**. Catatan: di Excel baris Allowance (E22/G22) dihitung **pro-rata** (6% × nilai implementasi: 3.265.193,76 / 2.286.757,92), bukan /2.
+2. **CCSI D31 Biaya Permit Site Manado 22.000.000** tidak disebut dalam keputusan, jadi saya **tahan** dengan catatan.
+3. **OPS Evantama** (grup "Cluster Sinagar & Kersanegara Tasik") ikut dijadikan aturan default EQUAL 3 cluster, sesuai keputusan Fase 2 (acuan J).
+4. **Seed aturan bersifat insert-only:** keputusan yang sudah diubah pengguna tidak ditimpa. Aturan dilewati bila cluster dengan nama terkait belum ada (mis. DB production tanpa data contoh).
+
+### Yang perlu direview
+
+- [ ] **ADW C79 (18.386.500):** konfirmasi duplikat atau bukan (lihat tabel cek duplikat).
+- [ ] **CCSI D36 Allowance:** EQUAL (sesuai instruksi) atau pro-rata (sesuai rumus Excel E22)?
+- [ ] **CCSI D31 Permit Manado 22.000.000:** metode alokasi ke 2 cluster.
+- [ ] **Item yang masih perlu dipetakan:**
+  - daftar Biaya PJD Evantama (10 item, 13.775.000; rata 3 cluster?),
+  - "Biaya OPS" ADW berisi PJD/Allowance (4 item, 18.470.000; cluster mana?),
+  - blok CCSI Site Semarang (permit 36.000.000, jasa 7.445.482, allowance 2.812.450). Hanya ada 1 cluster Semarang; boleh dipetakan otomatis ke cluster tsb?
+- [ ] **Redis ditunda ke fase deployment:** rate limit login & webhook masih di memori proses (single instance). Wajib diganti Redis bila API dijalankan lebih dari satu instance.
+
 ## Fase 2 — Realisasi biaya vs budget (14 Oktober 2026)
 
 ### Status verifikasi

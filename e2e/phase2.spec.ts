@@ -19,12 +19,22 @@ test('Finance: import RAB (pemetaan manual OPS) & buku kas lewat UI', async ({ p
   await page.getByRole('tab', { name: 'RAB Realisasi' }).click();
   await page.getByLabel('File RAB').setInputFiles(RAB);
   await page.getByRole('button', { name: /Preview/ }).click();
-  const ops = page.getByTestId('rab-group').filter({ hasText: 'Cluster Sinagar & Kersanegara Tasik' });
-  await expect(ops).toBeVisible();
-  await ops.getByRole('button', { name: /Pakai usulan: rata ke/ }).click();
+  // aturan default: OPS Evantama & CCSI Manado sudah terpetakan; 4 ditahan, 2 duplikat
+  await expect(page.getByRole('button', { name: 'Ditahan: 4' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Duplikat: 2' })).toBeVisible();
+  await expect(page.getByTestId('rab-group').filter({ hasText: 'Cluster Sinagar & Kersanegara Tasik' })).toHaveCount(0);
   await page.screenshot({ path: path.join(SHOTS, 'import-rab.png') });
   await page.getByRole('button', { name: /^Commit/ }).click();
-  await expect(page.getByText(/Import selesai: \d+ realisasi baru/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Import selesai: \d+ realisasi baru, 0 diperbarui, 4 ditahan/)).toBeVisible({ timeout: 30_000 });
+
+  // daftar ditahan: tandai "CCSI … Manado Sulut" (????) sebagai dilewati tanpa import ulang
+  const held = page.getByTestId('held-item');
+  await expect(held).toHaveCount(4);
+  const item = held.filter({ hasText: 'Manado Sulut' });
+  await item.getByRole('button', { name: 'Tindak lanjut' }).click();
+  await item.getByLabel('Catatan item ditahan').fill('Bukan biaya proyek');
+  await item.getByRole('button', { name: 'Lewati' }).click();
+  await expect(page.getByTestId('held-item')).toHaveCount(3);
 
   await page.getByRole('tab', { name: 'Buku Kas' }).click();
   await page.getByLabel('File buku kas').setInputFiles(RAB);
@@ -57,6 +67,11 @@ test('Termin klien: bayar kurang dari bruto → potongan jadi realisasi PAJAK', 
   await expect(row).toContainText('Dibayar');
   await expect(row).toContainText('16 Oktober 2026'); // jatuh tempo 30 hari kalender
   await page.screenshot({ path: path.join(SHOTS, 'termin-klien.png') });
+  // hitung ulang termin: nilai PO belum berubah → tidak ada perubahan
+  await page.getByRole('button', { name: 'Hitung ulang termin' }).click();
+  await expect(page.getByTestId('recalc-IMPLEMENTASI')).toBeVisible();
+  await expect(page.getByText('Tidak ada perubahan — termin sudah sesuai nilai PO.')).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Batal' }).click();
   await page.getByRole('tab', { name: 'Realisasi' }).click();
   await expect(page.locator('tr[data-level]', { hasText: /^Pajak/ })).toContainText('326.278'); // bruto 8.326.277,60 − diterima 8.000.000 (dibulatkan)
 });

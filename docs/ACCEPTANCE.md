@@ -171,3 +171,28 @@ memverifikasinya; setelah diverifikasi, realisasi bertambah sebesar nominal expe
 - Evantama permit 50/50: 37.000.000 → 18.500.000 / 18.500.000.
 - Jatuh tempo 30 hari kalender: 16 Sep 2026 → 16 Okt 2026.
 - Jatuh tempo 14 hari kerja: 14 Sep 2026 → 2 Okt 2026. Bila 1 Okt hari libur → 5 Okt 2026.
+
+## N. Fase 2.1 — import RAB sekali jalan dengan aturan default
+
+Aturan default di-seed (`apps/api/src/import/default-rab-rules.ts`, insert-only). Dites di `apps/api/test/realization.e2e-spec.ts`.
+
+| Item | Keputusan | Hasil |
+|---|---|---|
+| CCSI Site Manado jasa D35, D37, D38 (36.920.416) | PRO_RATA_PO ke Kalawiran & Karondoran | Σ 2 cluster = 36.920.416 |
+| CCSI Manado D36 Allowance Doc SND & Mob Demob | EQUAL 2 cluster, kategori PJD (pos Allowance) | 2.775.975 / cluster |
+| CCSI Manado D31 Biaya Permit 22.000.000 | **Ditahan** (metode alokasi belum diputuskan) | — |
+| CCSI daftar Keterangan (C54–C61) | EQUAL 2 cluster Manado; tiket → TICKET, HB → HOMEBASE, sewa motor → MOTOR_MOBIL, kasbon & OPS → OPS (pos OPS_KANTOR) | Tiket 1.803.700 / cluster (= E12); OPS_KANTOR 2.488.000 / cluster (= E19) |
+| CCSI C58 "… Manado Sulut" 4.000.000 ("????") | **Ditahan** | tidak diimpor |
+| EVANTAMA E144:G148 ringkasan PJD | Dilewati (duplikat) | status SKIPPED |
+| ADW C78 Pembelian Material Tepas Ngawi 4.275.000 | **Duplikat**: tanggal & nominal sama dengan buku kas "Pembelian Material Kersanegara RW 08" (EVANTAMA) dan sudah ada di `EVANTAMA!M42 = 91000+4275000` | status DUPLICATE |
+| ADW C79 Material FTTH CI Ngawi 18.386.500 | **Ditahan** — kemungkinan duplikat 5 sel "Material Ngawi" (Σ 20.814.181,21 ≈ 18.386.500 + 2.425.000) | dilepas di test → PRO_RATA 5 cluster TEPAS NGAWI, Σ = 18.386.500 |
+| ADW C80 Material Cluster Wonosobo 4.390.600 | **Duplikat**: = BI38 2.959.400 + BM37 1.431.200 | status DUPLICATE |
+| ADW C81 Material FTTH 4.971.400 | **Ditahan** (buku kas: Pemalang) | — |
+
+Commit pertama tanpa keputusan tambahan: 4 item ditahan, 2 duplikat, 3 dilewati. Import ulang: NEW = 0, CHANGED = 0.
+
+Alokasi MANUAL di pemetaan import memakai persentase per cluster (Σ = 100%, dibulatkan kumulatif). Contoh ADW
+"Biaya OPS" 70% / 30%: item 10.000.000 → 7.000.000 / 3.000.000. Total selain 100% ditolak (400).
+
+Hitung ulang termin (nilai PO Batumpang diubah ke 26.000.000, termin 1 sudah PAID): termin 1 tetap, termin 2 =
+10% × 26.000.000 = 2.600.000, termin 3 = 26.000.000 − termin 1 − termin 2. Bila semua termin sudah ditagih → 409.

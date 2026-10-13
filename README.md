@@ -81,6 +81,10 @@ LAN_HOST=192.168.1.20 TRUST_PROXY_HOPS=2 docker compose --profile https up -d --
   - Jatuh tempo hari kerja melewati Sabtu, Minggu, dan tabel Hari Libur.
   - Bila nominal diterima < bruto, selisihnya otomatis menjadi expense PAJAK.
 - **Import Excel** (menu Import → RAB Realisasi / Buku Kas): dry-run → preview → keputusan pemetaan manual (diingat untuk import berikutnya) → commit. Buku kas hanya untuk referensi dan rekonsiliasi.
+- **Import dari CLI:** dengan aturan pemetaan default (mis. di container Docker):
+  `docker compose exec api npx ts-node --transpile-only scripts/import-rab.ts /app/docs/samples/RAB_Project_TELCO_-_IBK_1.sample.xlsx [--dry-run]`.
+  Script mencetak laporan per project: total realisasi, jumlah item terimpor/dilewati/ditahan/duplikat, dan 5 cluster dengan % terpakai tertinggi.
+- **Item "Ditahan — perlu konfirmasi":** dilepas atau ditandai lewati/duplikat di menu Import → RAB Realisasi, tanpa unggah ulang.
 - **Webhook bot (Telegram/n8n):** `POST /api/webhooks/expenses` dengan header `X-API-Key` (dibuat ADMIN di Pengaturan → API key).
 
 ```bash
