@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+storage/uploads/*
+!storage/uploads/.gitkeep
+.turbo
+e2e/test-results
+e2e/report
+*.log
+.DS_Store
