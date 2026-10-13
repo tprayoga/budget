@@ -42,6 +42,11 @@ export interface FrLineInput {
   sedangDiproses?: Num;
   /** Σ pctCair pos ini dari pengajuan DICAIRKAN + sedang diproses (untuk deteksi termin pelunasan). */
   pctCairSebelumnya?: Num;
+  /**
+   * Σ alokasi expense TERVERIFIKASI ke cluster & pos ini yang tidak ditautkan ke pengajuan (fundRequestId = null),
+   * mis. realisasi hasil import RAB sebelum sistem. Biaya ini sudah dibayar → tidak boleh diajukan lagi.
+   */
+  realisasiTanpaPengajuan?: Num;
   keterangan?: string | null;
 }
 
@@ -54,10 +59,17 @@ export interface FrLineResult {
   diajukan: D;
   sudahDicairkanSebelum: D;
   sedangDiproses: D;
-  /** ROUND(budget) − sudahDicairkanSebelum − diajukan (kolom "Sisa Budget" di form). */
+  realisasiTanpaPengajuan: D;
+  /** sudahDicairkanSebelum + realisasiTanpaPengajuan (kolom "Sudah Terpakai/Dicairkan" di form). */
+  sudahTerpakai: D;
+  /** ROUND(budget) − sudahDicairkan − sedangDiproses − realisasiTanpaPengajuan (yang masih bisa diajukan). */
+  sisaTersedia: D;
+  /** ROUND(budget) − sudahTerpakai − diajukan (kolom "Sisa Budget" di form). */
   sisaBudget: D;
-  /** ROUND(budget) − sudahDicairkanSebelum − sedangDiproses − diajukan (dipakai validasi). */
+  /** sisaTersedia − diajukan (dipakai validasi; nama lama dipertahankan untuk kompatibilitas). */
   sisaSetelahProses: D;
+  /** Pos tanpa sisa (sisaTersedia < Rp 1) → % cair 0, input dinonaktifkan; negatif = over. */
+  habis: boolean;
   /** true bila diajukan disesuaikan ke sisa budget pada termin pelunasan (lihat computeFrLine). */
   penyesuaianPembulatan: boolean;
   overBudget: boolean;
@@ -70,35 +82,68 @@ export interface FrLineResult {
  */
 const TOLERANSI_PEMBULATAN = new D(1);
 
+/** Sisa yang masih bisa diajukan per pos (rupiah, presisi penuh). */
+export function frSisaTersedia(input: Pick<FrLineInput, 'budgetAmount' | 'sudahDicairkanSebelum' | 'sedangDiproses' | 'realisasiTanpaPengajuan'>): D {
+  return roundHalfUp(dec(input.budgetAmount), 0)
+    .minus(dec(input.sudahDicairkanSebelum))
+    .minus(dec(input.sedangDiproses))
+    .minus(dec(input.realisasiTanpaPengajuan));
+}
+
+/** Pos dianggap habis bila sisa tersedia < Rp 1 (sisa sen akibat alokasi tidak bisa diajukan). */
+export function frHabis(sisaTersedia: Num): boolean {
+  return dec(sisaTersedia).lt(1);
+}
+
+/**
+ * % cair default = sisaTersedia / budget, dibulatkan ke BAWAH 2 desimal persen (rasio 4 desimal).
+ * Pos habis / budget 0 → 0.
+ */
+export function frDefaultPctCair(input: Pick<FrLineInput, 'budgetAmount' | 'sudahDicairkanSebelum' | 'sedangDiproses' | 'realisasiTanpaPengajuan'>): D {
+  const budget = dec(input.budgetAmount);
+  const sisa = frSisaTersedia(input);
+  if (budget.lte(0) || frHabis(sisa)) return new D(0);
+  return D.min(sisa.div(budget), 1).toDecimalPlaces(4, D.ROUND_DOWN);
+}
+
 /**
  * Hitung satu baris form pengajuan.
- *   diajukan   = ROUND_HALF_UP(budgetAmount × pctCair, 0)
- *   sisaBudget = ROUND_HALF_UP(budgetAmount, 0) − sudahDicairkanSebelum − diajukan
+ *   diajukan              = ROUND_HALF_UP(budgetAmount × pctCair, 0)
+ *   sisaTersedia          = ROUND(budget) − sudahDicairkan − sedangDiproses − realisasiTanpaPengajuan
+ *   sisaSetelahPengajuan  = sisaTersedia − diajukan   (validasi ≥ 0 untuk pos yang diajukan)
+ *   sisaBudget (form)     = ROUND(budget) − (sudahDicairkan + realisasiTanpaPengajuan) − diajukan
  *
- * Penyesuaian pembulatan termin pelunasan: bila Σ pctCair (sebelumnya + sekarang) tepat 100%,
- * diajukan = sisa yang tersedia, sehingga pembulatan per termin (mis. 2 × ROUND(118.010,625))
- * tidak menghasilkan sisa −1 rupiah. Selisihnya hanya akibat pembulatan dan ditandai.
+ * Aturan pelunasan: bila diajukan "mencapai sisa" — Σ pctCair (sebelumnya + sekarang) tepat 100% dengan selisih
+ * ≤ Rp 1, atau selisih dengan sisa tersedia (dibulatkan ke bawah ke rupiah) ≤ 1 langkah % (0,01% × budget, min Rp 1) —
+ * diajukan = sisa tersedia, sehingga pembulatan tidak meninggalkan sisa receh/minus. Ditandai penyesuaianPembulatan.
+ * Pos yang sudah over (sisa < 0) tetapi tidak diajukan (diajukan 0) tidak menggagalkan validasi.
  */
 export function computeFrLine(input: FrLineInput, nilaiProyek: Num): FrLineResult {
   const budgetAmount = dec(input.budgetAmount);
   const pctCair = dec(input.pctCair);
   const sudah = dec(input.sudahDicairkanSebelum);
   const sedang = dec(input.sedangDiproses);
+  const realisasi = dec(input.realisasiTanpaPengajuan);
   const budgetRp = roundHalfUp(budgetAmount, 0);
+  const sisaTersedia = budgetRp.minus(sudah).minus(sedang).minus(realisasi);
 
   let diajukan = roundHalfUp(budgetAmount.times(pctCair), 0);
   let penyesuaianPembulatan = false;
-  const totalPct = dec(input.pctCairSebelumnya).plus(pctCair);
-  if (totalPct.eq(1) && pctCair.gt(0)) {
-    const tersedia = D.max(budgetRp.minus(sudah).minus(sedang), 0);
-    if (!tersedia.eq(diajukan) && tersedia.minus(diajukan).abs().lte(TOLERANSI_PEMBULATAN)) {
+  if (pctCair.gt(0)) {
+    const tersedia = D.max(sisaTersedia, 0).toDecimalPlaces(0, D.ROUND_DOWN);
+    const totalPct = dec(input.pctCairSebelumnya).plus(pctCair);
+    const langkah = D.max(budgetAmount.times('0.0001'), TOLERANSI_PEMBULATAN);
+    const selisih = tersedia.minus(diajukan).abs();
+    const pelunasan = (totalPct.eq(1) && selisih.lte(TOLERANSI_PEMBULATAN)) || selisih.lte(langkah);
+    if (!tersedia.eq(diajukan) && pelunasan) {
       diajukan = tersedia;
       penyesuaianPembulatan = true;
     }
   }
 
-  const sisaBudget = budgetRp.minus(sudah).minus(diajukan);
-  const sisaSetelahProses = sisaBudget.minus(sedang);
+  const sudahTerpakai = sudah.plus(realisasi);
+  const sisaBudget = budgetRp.minus(sudahTerpakai).minus(diajukan);
+  const sisaSetelahProses = sisaTersedia.minus(diajukan);
   return {
     code: input.code,
     section: frSection(input.code),
@@ -108,10 +153,14 @@ export function computeFrLine(input: FrLineInput, nilaiProyek: Num): FrLineResul
     diajukan,
     sudahDicairkanSebelum: sudah,
     sedangDiproses: sedang,
+    realisasiTanpaPengajuan: realisasi,
+    sudahTerpakai,
+    sisaTersedia,
     sisaBudget,
     sisaSetelahProses,
+    habis: frHabis(sisaTersedia),
     penyesuaianPembulatan,
-    overBudget: sisaSetelahProses.isNegative() && !sisaSetelahProses.isZero(),
+    overBudget: diajukan.gt(0) && sisaSetelahProses.isNegative() && !sisaSetelahProses.isZero(),
     keterangan: input.keterangan ?? null,
   };
 }
@@ -122,6 +171,10 @@ export interface FrTotals {
   diajukan: D;
   sudahDicairkanSebelum: D;
   sedangDiproses: D;
+  realisasiTanpaPengajuan: D;
+  sudahTerpakai: D;
+  /** Σ max(sisaTersedia, 0) — total yang masih bisa diajukan. */
+  sisaTersedia: D;
   sisaBudget: D;
 }
 
@@ -131,7 +184,7 @@ export interface FundRequestCalc {
   subtotalA: FrTotals;
   subtotalB: FrTotals;
   total: FrTotals;
-  /** Pos yang melanggar validasi sisa budget (sisaSetelahProses < 0). */
+  /** Pos yang melanggar validasi sisa budget (diajukan > 0 dan sisaSetelahPengajuan < 0). */
   overBudgetCodes: FrCode[];
 }
 
@@ -142,6 +195,9 @@ function totals(lines: FrLineResult[]): FrTotals {
     diajukan: sum(lines.map((l) => l.diajukan)),
     sudahDicairkanSebelum: sum(lines.map((l) => l.sudahDicairkanSebelum)),
     sedangDiproses: sum(lines.map((l) => l.sedangDiproses)),
+    realisasiTanpaPengajuan: sum(lines.map((l) => l.realisasiTanpaPengajuan)),
+    sudahTerpakai: sum(lines.map((l) => l.sudahTerpakai)),
+    sisaTersedia: sum(lines.map((l) => (l.habis ? new D(0) : l.sisaTersedia))),
     sisaBudget: sum(lines.map((l) => l.sisaBudget)),
   };
 }
@@ -185,9 +241,10 @@ function emptyByCode(): Record<FrCode, D> {
  * Agregasi riwayat pengajuan satu cluster:
  *   sudahDicairkanSebelum = Σ diajukan status DICAIRKAN
  *   sedangDiproses        = Σ diajukan status DIAJUKAN..DIKETAHUI_INVESTOR (kecuali excludeId)
- *   terminKe              = jumlah pengajuan DICAIRKAN + 1
+ *   terminKe              = jumlah pengajuan DICAIRKAN + terminOffset + 1
+ * terminOffset = jumlah termin yang sudah terjadi sebelum sistem (diset ADMIN per cluster, default 0).
  */
-export function aggregateFrHistory(history: FrHistoryItem[], excludeId?: string | null): FrHistoryAggregate {
+export function aggregateFrHistory(history: FrHistoryItem[], excludeId?: string | null, terminOffset = 0): FrHistoryAggregate {
   const sudah = emptyByCode();
   const sedang = emptyByCode();
   const pct = emptyByCode();
@@ -205,7 +262,7 @@ export function aggregateFrHistory(history: FrHistoryItem[], excludeId?: string 
       pct[l.budgetCode] = pct[l.budgetCode].plus(dec(l.pctCair));
     }
   }
-  return { sudahDicairkanSebelum: sudah, sedangDiproses: sedang, pctCairSebelumnya: pct, terminKe: cair + 1 };
+  return { sudahDicairkanSebelum: sudah, sedangDiproses: sedang, pctCairSebelumnya: pct, terminKe: cair + terminOffset + 1 };
 }
 
 /** Nomor pengajuan: FPD/{PROJECT_CODE}/{YYYY}/{MM}/{seq 3 digit}, bulan menurut Asia/Jakarta. */

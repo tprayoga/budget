@@ -104,7 +104,18 @@ export class ExpensesService {
 
   async list(
     user: AuthUser,
-    q: { projectId?: string; clusterId?: string; status?: ExpenseStatus; category?: string; fundRequestId?: string; from?: string; to?: string; q?: string },
+    q: {
+      projectId?: string;
+      clusterId?: string;
+      status?: ExpenseStatus;
+      category?: string;
+      fundRequestId?: string;
+      budgetCode?: string;
+      tanpaPengajuan?: string;
+      from?: string;
+      to?: string;
+      q?: string;
+    },
   ) {
     const rows = await this.prisma.expense.findMany({
       where: {
@@ -112,7 +123,8 @@ export class ExpensesService {
         projectId: q.projectId,
         status: q.status,
         category: q.category as Prisma.ExpenseWhereInput['category'],
-        fundRequestId: q.fundRequestId,
+        fundRequestId: q.tanpaPengajuan === 'true' ? null : q.fundRequestId,
+        budgetCode: q.budgetCode as Prisma.ExpenseWhereInput['budgetCode'],
         ...(q.clusterId ? { allocations: { some: { clusterId: q.clusterId } } } : {}),
         ...(q.from || q.to
           ? { date: { gte: q.from ? new Date(`${q.from}T00:00:00Z`) : undefined, lte: q.to ? new Date(`${q.to}T00:00:00Z`) : undefined } }

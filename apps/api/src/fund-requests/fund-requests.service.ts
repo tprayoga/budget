@@ -23,6 +23,8 @@ import {
   FR_CODES,
   FR_DEFAULT_KETERANGAN,
   frBudgetAmounts,
+  frDefaultPctCair,
+  frHabis,
   frSection,
   inboxStatuses,
   moneyStr,
@@ -47,6 +49,7 @@ import { StorageService, type UploadedFile } from '../storage/storage.service';
 import { RealizationService } from '../realization/realization.service';
 import { PdfService } from '../pdf/pdf.service';
 import type { RealizationReportData } from '../pdf/realization-report.template';
+import { realisasiTanpaPengajuan } from './realisasi-tanpa-pengajuan';
 
 const DETAIL_INCLUDE = {
   lines: true,
@@ -61,7 +64,8 @@ type FrDetail = Prisma.FundRequestGetPayload<{ include: typeof DETAIL_INCLUDE }>
 
 interface LineIntent {
   budgetCode: FrCode;
-  pctCair: string;
+  /** null = pakai default (sisa tersedia / budget). */
+  pctCair: string | null;
   keterangan: string | null;
 }
 
@@ -101,6 +105,7 @@ function flatForAudit(fr: (FundRequest & { lines: FundRequestLine[] }) | null) {
     o[`line.${l.budgetCode}.diajukan`] = s(l.diajukan);
     o[`line.${l.budgetCode}.sudahDicairkanSebelum`] = s(l.sudahDicairkanSebelum);
     o[`line.${l.budgetCode}.sedangDiproses`] = s(l.sedangDiproses);
+    o[`line.${l.budgetCode}.realisasiTanpaPengajuan`] = s(l.realisasiTanpaPengajuan);
     o[`line.${l.budgetCode}.keterangan`] = l.keterangan;
   }
   return o;
@@ -173,8 +178,39 @@ export class FundRequestsService {
   }
 
   async get(user: AuthUser, id: string) {
-    const fr = await this.loadVisible(user, id);
+    let fr = await this.loadVisible(user, id);
+    if (fr.status === 'DRAFT' && (await this.refreshDraft(fr))) fr = await this.loadVisible(user, id);
     return this.view(user, fr);
+  }
+
+  /**
+   * Draft dibuka: bila realisasi tanpa pengajuan berubah sejak draft disimpan (mis. draft lama sebelum realisasi
+   * RAB diperhitungkan), hitung ulang. % cair pos yang melebihi sisa tersedia diturunkan ke % sisa (pos habis → 0).
+   * Ditandai recalcNote (banner) sampai disubmit; perubahan diaudit (pelaku sistem).
+   */
+  private async refreshDraft(fr: FrDetail): Promise<boolean> {
+    const real = await realisasiTanpaPengajuan(this.prisma, fr.clusterId);
+    const stored = new Map(fr.lines.map((l) => [l.budgetCode, dec(l.realisasiTanpaPengajuan.toString())]));
+    if (FR_CODES.every((c) => (stored.get(c) ?? dec(0)).eq(real[c].toFixed(2)))) return false;
+    await this.prisma.$transaction(async (tx) => {
+      const before = await tx.fundRequest.findUniqueOrThrow({ where: { id: fr.id }, include: { lines: true } });
+      const probe = await this.computeDraft(tx, fr.id, fr.clusterId, this.intentsFromLines(before.lines));
+      const intents = this.intentsFromLines(before.lines).map((i) => {
+        const line = probe.frCalc.lines.find((l) => l.code === i.budgetCode)!;
+        const def = frDefaultPctCair(line);
+        return i.pctCair !== null && dec(i.pctCair).gt(def) ? { ...i, pctCair: def.toString() } : i;
+      });
+      const c = await this.computeDraft(tx, fr.id, fr.clusterId, intents);
+      await this.persistComputation(tx, fr.id, c);
+      const total = sum(FR_CODES.map((code) => real[code]));
+      await tx.fundRequest.update({
+        where: { id: fr.id },
+        data: { recalcNote: `Angka diperbarui karena realisasi sebelumnya (Rp ${moneyStr(total)} di luar pengajuan) — ${todayJakartaIso()}` },
+      });
+      const after = await tx.fundRequest.findUniqueOrThrow({ where: { id: fr.id }, include: { lines: true } });
+      await this.audit.diff(tx, null, 'FundRequest', fr.id, flatForAudit(before), { ...flatForAudit(after)!, sumber: 'hitung ulang realisasi tanpa pengajuan' });
+    });
+    return true;
   }
 
   private async loadVisible(user: AuthUser, id: string, tx: Tx | PrismaService = this.prisma): Promise<FrDetail> {
@@ -231,6 +267,12 @@ export class FundRequestsService {
       diajukan: moneyStr(l.diajukan),
       sudahDicairkanSebelum: moneyStr(l.sudahDicairkanSebelum),
       sedangDiproses: moneyStr(l.sedangDiproses),
+      realisasiTanpaPengajuan: moneyStr(l.realisasiTanpaPengajuan),
+      sudahTerpakai: moneyStr(l.sudahTerpakai),
+      sisaTersedia: moneyStr(l.sisaTersedia),
+      /** % cair "sisa budget" (dibulatkan ke bawah 0,01%) — tombol cepat wizard. */
+      pctSisa: frDefaultPctCair(l).toString(),
+      habis: l.habis,
       sisaBudget: moneyStr(l.sisaBudget),
       sisaSetelahProses: moneyStr(l.sisaSetelahProses),
       penyesuaianPembulatan: l.penyesuaianPembulatan,
@@ -243,10 +285,14 @@ export class FundRequestsService {
       diajukan: moneyStr(t.diajukan),
       sudahDicairkanSebelum: moneyStr(t.sudahDicairkanSebelum),
       sedangDiproses: moneyStr(t.sedangDiproses),
+      realisasiTanpaPengajuan: moneyStr(t.realisasiTanpaPengajuan),
+      sudahTerpakai: moneyStr(t.sudahTerpakai),
+      sisaTersedia: moneyStr(t.sisaTersedia),
       sisaBudget: moneyStr(t.sisaBudget),
     });
 
     return {
+      recalcNote: live ? fr.recalcNote : null,
       id: fr.id,
       number: fr.number,
       label: fr.number ?? draftLabel(fr.id),
@@ -327,7 +373,7 @@ export class FundRequestsService {
   }
 
   private intentsFromLines(lines: FundRequestLine[]): LineIntent[] {
-    return lines.map((l) => ({ budgetCode: l.budgetCode, pctCair: l.pctCair.toString(), keterangan: l.keterangan }));
+    return lines.map((l) => ({ budgetCode: l.budgetCode, pctCair: l.pctCair.toString() as string | null, keterangan: l.keterangan }));
   }
 
   /** Bentuk FundRequestCalc dari baris snapshot (status selain DRAFT). */
@@ -338,19 +384,27 @@ export class FundRequestsService {
       .map((l) => {
         const sisaBudget = dec(l.sisaBudget.toString());
         const sisaSetelahProses = sisaBudget.minus(dec(l.sedangDiproses.toString()));
+        const diajukan = dec(l.diajukan.toString());
+        const sudahDicairkanSebelum = dec(l.sudahDicairkanSebelum.toString());
+        const realisasi = dec(l.realisasiTanpaPengajuan.toString());
+        const sisaTersedia = sisaSetelahProses.plus(diajukan);
         return {
           code: l.budgetCode,
           section: frSection(l.budgetCode),
           budgetAmount: dec(l.budgetAmount.toString()),
           pctNilaiProyek: dec(l.pctNilaiProyek.toString()),
           pctCair: dec(l.pctCair.toString()),
-          diajukan: dec(l.diajukan.toString()),
-          sudahDicairkanSebelum: dec(l.sudahDicairkanSebelum.toString()),
+          diajukan,
+          sudahDicairkanSebelum,
           sedangDiproses: dec(l.sedangDiproses.toString()),
+          realisasiTanpaPengajuan: realisasi,
+          sudahTerpakai: sudahDicairkanSebelum.plus(realisasi),
+          sisaTersedia,
+          habis: frHabis(sisaTersedia),
           sisaBudget,
           sisaSetelahProses,
           penyesuaianPembulatan: false,
-          overBudget: sisaSetelahProses.isNegative() && !sisaSetelahProses.isZero(),
+          overBudget: diajukan.gt(0) && sisaSetelahProses.isNegative() && !sisaSetelahProses.isZero(),
           keterangan: l.keterangan,
         };
       });
@@ -360,6 +414,9 @@ export class FundRequestsService {
       diajukan: sum(ls.map((l) => l.diajukan)),
       sudahDicairkanSebelum: sum(ls.map((l) => l.sudahDicairkanSebelum)),
       sedangDiproses: sum(ls.map((l) => l.sedangDiproses)),
+      realisasiTanpaPengajuan: sum(ls.map((l) => l.realisasiTanpaPengajuan)),
+      sudahTerpakai: sum(ls.map((l) => l.sudahTerpakai)),
+      sisaTersedia: sum(ls.map((l) => (l.habis ? dec(0) : l.sisaTersedia))),
       sisaBudget: sum(ls.map((l) => l.sisaBudget)),
     });
     return {
@@ -397,19 +454,25 @@ export class FundRequestsService {
         lines: h.lines.map((l) => ({ budgetCode: l.budgetCode, diajukan: l.diajukan.toString(), pctCair: l.pctCair.toString() })),
       })),
       frId,
+      cluster.terminOffset,
     );
+    const real = await realisasiTanpaPengajuan(tx, clusterId);
     const byCode = new Map(intents.map((i) => [i.budgetCode, i]));
     const frCalc = computeFundRequest(
       calc.nilaiProyek,
-      FR_CODES.map((code) => ({
-        code,
-        budgetAmount: moneyStr(amounts[code]),
-        pctCair: byCode.get(code)?.pctCair ?? '1',
-        sudahDicairkanSebelum: hist.sudahDicairkanSebelum[code],
-        sedangDiproses: hist.sedangDiproses[code],
-        pctCairSebelumnya: hist.pctCairSebelumnya[code],
-        keterangan: byCode.has(code) ? byCode.get(code)!.keterangan : (FR_DEFAULT_KETERANGAN[code] ?? null),
-      })),
+      FR_CODES.map((code) => {
+        const base = {
+          code,
+          budgetAmount: moneyStr(amounts[code]),
+          sudahDicairkanSebelum: hist.sudahDicairkanSebelum[code],
+          sedangDiproses: hist.sedangDiproses[code],
+          realisasiTanpaPengajuan: real[code],
+          pctCairSebelumnya: hist.pctCairSebelumnya[code],
+        };
+        // default % cair = sisa tersedia / budget (pos habis → 0)
+        const pct = byCode.get(code)?.pctCair ?? frDefaultPctCair(base).toString();
+        return { ...base, pctCair: pct, keterangan: byCode.has(code) ? byCode.get(code)!.keterangan : (FR_DEFAULT_KETERANGAN[code] ?? null) };
+      }),
     );
     return {
       cluster,
@@ -443,6 +506,7 @@ export class FundRequestsService {
         diajukan: money(l.diajukan),
         sudahDicairkanSebelum: money(l.sudahDicairkanSebelum),
         sedangDiproses: money(l.sedangDiproses),
+        realisasiTanpaPengajuan: money(l.realisasiTanpaPengajuan),
         sisaBudget: money(l.sisaBudget),
         keterangan: l.keterangan,
         sortOrder: i,
@@ -478,6 +542,7 @@ export class FundRequestsService {
         diajukan: moneyStr(l.diajukan),
         sudahDicairkanSebelum: moneyStr(l.sudahDicairkanSebelum),
         sedangDiproses: moneyStr(l.sedangDiproses),
+        realisasiTanpaPengajuan: moneyStr(l.realisasiTanpaPengajuan),
         sisa: moneyStr(l.sisaSetelahProses),
       }));
     return new ConflictException({
@@ -504,15 +569,18 @@ export class FundRequestsService {
       })),
       fr.id,
     );
+    const real = await realisasiTanpaPengajuan(tx, fr.clusterId);
     const lines = fr.lines.map((l) => {
-      const budgetRp = dec(l.budgetAmount.toString()).toDecimalPlaces(0);
+      const budgetRp = dec(l.budgetAmount.toString()).toDecimalPlaces(0, 4);
       const sisa = budgetRp
         .minus(hist.sudahDicairkanSebelum[l.budgetCode])
         .minus(hist.sedangDiproses[l.budgetCode])
+        .minus(real[l.budgetCode])
         .minus(dec(l.diajukan.toString()));
       return { l, sisa };
     });
-    const bad = lines.filter((x) => x.sisa.isNegative() && !x.sisa.isZero());
+    // pos yang tidak diajukan (diajukan 0) tidak menggagalkan validasi walaupun sudah over
+    const bad = lines.filter((x) => dec(x.l.diajukan.toString()).gt(0) && x.sisa.isNegative() && !x.sisa.isZero());
     if (bad.length && !fr.overrideReason) {
       throw new ConflictException({
         message: `Pengajuan melebihi sisa budget pada pos: ${bad.map((b) => b.l.label).join(', ')}`,
@@ -523,6 +591,7 @@ export class FundRequestsService {
           diajukan: b.l.diajukan.toString(),
           sudahDicairkanSebelum: hist.sudahDicairkanSebelum[b.l.budgetCode].toFixed(2),
           sedangDiproses: hist.sedangDiproses[b.l.budgetCode].toFixed(2),
+          realisasiTanpaPengajuan: real[b.l.budgetCode].toFixed(2),
           sisa: b.sisa.toFixed(2),
         })),
       });
@@ -533,7 +602,7 @@ export class FundRequestsService {
 
   private normalizeIntents(lines: FrCreateInput['lines'], existing?: LineIntent[]): LineIntent[] {
     const base = new Map<FrCode, LineIntent>(
-      (existing ?? FR_CODES.map((c) => ({ budgetCode: c, pctCair: '1', keterangan: FR_DEFAULT_KETERANGAN[c] ?? null }))).map(
+      (existing ?? FR_CODES.map((c) => ({ budgetCode: c, pctCair: null, keterangan: FR_DEFAULT_KETERANGAN[c] ?? null }))).map(
         (i) => [i.budgetCode, i],
       ),
     );
@@ -545,7 +614,7 @@ export class FundRequestsService {
         keterangan: l.keterangan !== undefined ? (l.keterangan ?? null) : (prev?.keterangan ?? null),
       });
     }
-    return FR_CODES.map((c) => base.get(c) ?? { budgetCode: c, pctCair: '1', keterangan: FR_DEFAULT_KETERANGAN[c] ?? null });
+    return FR_CODES.map((c) => base.get(c) ?? { budgetCode: c, pctCair: null, keterangan: FR_DEFAULT_KETERANGAN[c] ?? null });
   }
 
   async create(user: AuthUser, input: FrCreateInput) {
@@ -691,6 +760,7 @@ export class FundRequestsService {
           status: 'DIAJUKAN',
           submittedAt: new Date(),
           rejectedNote: null,
+          recalcNote: null,
           overrideReason,
           overrideById: overrideReason ? user.id : null,
         },

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   aggregateFrHistory,
@@ -22,11 +22,13 @@ import { money, rate } from '../common/decimal';
 import { clusterDto, type ClusterWithLines } from '../budget/budget.mapper';
 import { generateClientPayments } from '../realization/termin-generator';
 import { ensureClusterPos, markOverride, poDto, PO_DERIVED_FIELDS } from './po-support';
+import { realisasiTanpaPengajuan } from '../fund-requests/realisasi-tanpa-pengajuan';
 
 const CLUSTER_FIELDS = [
   'name',
   'info',
   'note',
+  'terminOffset',
   'division',
   'status',
   'nilaiPoImpl',
@@ -41,7 +43,7 @@ const CLUSTER_FIELDS = [
 function flatForAudit(c: ReturnType<typeof clusterDto> | null) {
   if (!c) return null;
   const o: Record<string, string | null> = {};
-  for (const f of CLUSTER_FIELDS) o[f] = (c[f] as string | null) ?? null;
+  for (const f of CLUSTER_FIELDS) o[f] = c[f] === null || c[f] === undefined ? null : String(c[f]);
   for (const l of c.lines) {
     o[`line.${l.code}.mode`] = l.mode;
     o[`line.${l.code}.pct`] = l.pct;
@@ -107,7 +109,10 @@ export class ClustersService {
         status: f.status,
         lines: f.lines.map((l) => ({ budgetCode: l.budgetCode, diajukan: l.diajukan.toString(), pctCair: l.pctCair.toString() })),
       })),
+      null,
+      c.terminOffset,
     );
+    const real = await realisasiTanpaPengajuan(this.prisma, id);
     const usage = FR_CODES.map((code) => {
       const budgetRp = roundHalfUp(budgetByCode[code], 0);
       const sudah = hist.sudahDicairkanSebelum[code];
@@ -118,7 +123,8 @@ export class ClustersService {
         budget: budgetRp.toFixed(2),
         sudahDicairkan: sudah.toFixed(2),
         sedangDiproses: sedang.toFixed(2),
-        sisa: budgetRp.minus(sudah).minus(sedang).toFixed(2),
+        realisasiTanpaPengajuan: real[code].toFixed(2),
+        sisa: budgetRp.minus(sudah).minus(sedang).minus(real[code]).toFixed(2),
       };
     });
     return {
@@ -197,6 +203,10 @@ export class ClustersService {
         if (input.name !== undefined) data.name = input.name;
         if (input.info !== undefined) data.info = input.info ?? null;
         if (input.note !== undefined) data.note = input.note || null;
+        if (input.terminOffset !== undefined && input.terminOffset !== before.terminOffset) {
+          if (user.role !== 'ADMIN') throw new ForbiddenException('Hanya ADMIN yang boleh mengubah jumlah termin sebelum sistem');
+          data.terminOffset = input.terminOffset;
+        }
         if (input.division !== undefined) data.division = input.division ?? null;
         if (input.status !== undefined) data.status = input.status;
         // Fase 2.3: nilai PO & biaya permit diturunkan dari tabel PO — edit lewat PO, bukan langsung

@@ -42,7 +42,7 @@ export function renderFundRequestHtml(fr: FrView): string {
           <td class="r">${rp(l.budgetAmount)}</td>
           <td class="r">${pct(l.pctCair)}</td>
           <td class="r b">${rp(l.diajukan)}</td>
-          <td class="r">${rp(l.sudahDicairkanSebelum)}</td>
+          <td class="r">${rp(l.sudahTerpakai)}${Number(l.realisasiTanpaPengajuan) ? '<sup>*</sup>' : ''}</td>
           <td class="r ${Number(l.sisaBudget) < 0 ? 'neg' : ''}">${rp(l.sisaBudget)}</td>
           <td class="ket">${esc(l.keterangan)}</td>
         </tr>`,
@@ -54,7 +54,7 @@ export function renderFundRequestHtml(fr: FrView): string {
       <td class="r">${rp(t.budgetAmount)}</td>
       <td></td>
       <td class="r">${rp(t.diajukan)}</td>
-      <td class="r">${rp(t.sudahDicairkanSebelum)}</td>
+      <td class="r">${rp(t.sudahTerpakai)}</td>
       <td class="r">${rp(t.sisaBudget)}</td>
       <td></td></tr>`;
 
@@ -139,7 +139,7 @@ ${wm ? `<div class="wm">${wm}</div>` : ''}
   <thead><tr>
     <th style="width:4%">No</th><th style="width:20%">Pos Anggaran</th><th style="width:7%">% Nilai Proyek</th>
     <th style="width:11%">Budget (Rp)</th><th style="width:7%">% Dicairkan</th><th style="width:11%">Diajukan Saat Ini (Rp)</th>
-    <th style="width:11%">Sudah Dicairkan Sblm (Rp)</th><th style="width:11%">Sisa Budget (Rp)</th><th>Keterangan / Peruntukan</th>
+    <th style="width:11%">Sudah Terpakai/ Dicairkan (Rp)</th><th style="width:11%">Sisa Budget (Rp)</th><th>Keterangan / Peruntukan</th>
   </tr></thead>
   <tbody>
     <tr class="part"><td class="c">A</td><td colspan="8">SUBCON, PERMIT &amp; PAJAK</td></tr>
@@ -151,6 +151,11 @@ ${wm ? `<div class="wm">${wm}</div>` : ''}
     ${subtotal('TOTAL PENGAJUAN', fr.total, 'total')}
   </tbody>
 </table>
+${
+  Number(fr.total.realisasiTanpaPengajuan)
+    ? `<div class="note">* Sudah Terpakai/Dicairkan = dana dicairkan lewat pengajuan + realisasi di luar pengajuan; termasuk realisasi sebelum sistem (Rp ${rp(fr.total.realisasiTanpaPengajuan)}).</div>`
+    : ''
+}
 
 <div class="sec">INFORMASI PENDUKUNG (tidak termasuk pengajuan)</div>
 <table class="kv">

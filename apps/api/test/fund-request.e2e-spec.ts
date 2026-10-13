@@ -81,8 +81,16 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
     expect(sub.body.signatures.DIAJUKAN.name).toBe('Andi Pratama');
   });
 
-  it('selama #1 diproses: pengajuan lain 100% ditolak (OVER_BUDGET), info sedangDiproses tampil', async () => {
-    const res = await ctx.api('pm').post('/fund-requests', { clusterId: wanasari, tanggal: '2026-10-14' }).expect(201);
+  it('selama #1 diproses: default % cair = sisa; pengajuan lain 100% ditolak (OVER_BUDGET), info sedangDiproses tampil', async () => {
+    // tanpa isian % → default sisa tersedia (sedang diproses ikut mengurangi) → tidak over
+    const def = await ctx.api('pm').post('/fund-requests', { clusterId: wanasari, tanggal: '2026-10-14' }).expect(201);
+    for (const l of def.body.lines as { pctCair: string; pctSisa: string; diajukan: string; sisaTersedia: string }[]) {
+      expect(Number(l.pctCair)).toBe(Number(l.pctSisa));
+      expect(Number(l.diajukan)).toBeLessThanOrEqual(Math.max(Number(l.sisaTersedia), 0));
+    }
+    expect(def.body.overBudgetCodes).toEqual([]);
+    await ctx.api('pm').del(`/fund-requests/${def.body.id}`).expect(200);
+    const res = await ctx.api('pm').post('/fund-requests', { clusterId: wanasari, tanggal: '2026-10-14', lines: pct('1') }).expect(201);
     expect(line(res.body, 'SUBCON').sedangDiproses).toBe('3476450.00');
     expect(line(res.body, 'SUBCON').sudahDicairkanSebelum).toBe('0.00');
     expect(res.body.overBudgetCodes).toContain('SUBCON');
@@ -223,7 +231,9 @@ describe('Validasi ulang saat approve', () => {
 describe('Akses INVESTOR ke pengajuan', () => {
   it('investor tidak melihat/approve pengajuan EVANTAMA', async () => {
     const cid = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Sinagar Tasik');
-    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: cid, lines: pct('0.1') }).expect(201);
+    // hanya SUBCON 10% (pos lain Sinagar sudah punya realisasi RAB — mis. Allowance over)
+    const lines = pct('0').map((l) => (l.budgetCode === 'SUBCON' ? { ...l, pctCair: '0.1' } : l));
+    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: cid, lines }).expect(201);
     const sub = await ctx.api('pm').post(`/fund-requests/${fr.body.id}/submit`).expect(200);
     expect(sub.body.number).toMatch(/^FPD\/EVANTAMA\/\d{4}\/\d{2}\/001$/);
     await ctx.api('finance').post(`/fund-requests/${fr.body.id}/approve`).expect(200);

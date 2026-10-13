@@ -478,7 +478,12 @@ describe('Input manual: PM perlu verifikasi, FINANCE langsung terverifikasi', ()
 describe('Tautan ke pengajuan dana: dana cair vs realisasi vs sisa', () => {
   it('hanya ke pengajuan DICAIRKAN; panel & PDF laporan; lampiran otomatis di pengajuan berikutnya', async () => {
     const cid = await clusterId(ctx.prisma, 'ADW', 'SARIREJA RW 01 SUBANG');
-    const lines = ['SUBCON', 'PERMIT', 'TICKET', 'PAJAK', 'INDIRECT', 'DIRECT', 'OPS_KANTOR', 'MOTOR_MOBIL', 'HOMEBASE', 'ALLOWANCE', 'MARKETING'].map((budgetCode) => ({ budgetCode, pctCair: '0.5' }));
+    // SUBCON setengah dari sisa saja (cluster ini sudah punya realisasi RAB → sisa < budget)
+    const probe = await ctx.api('pm').post('/fund-requests', { clusterId: cid }).expect(201);
+    const pctSisa = probe.body.lines.find((l: { budgetCode: string }) => l.budgetCode === 'SUBCON').pctSisa as string;
+    await ctx.api('pm').del(`/fund-requests/${probe.body.id}`).expect(200);
+    const half = (Math.floor((Number(pctSisa) / 2) * 10000) / 10000).toString();
+    const lines = ['SUBCON', 'PERMIT', 'TICKET', 'PAJAK', 'INDIRECT', 'DIRECT', 'OPS_KANTOR', 'MOTOR_MOBIL', 'HOMEBASE', 'ALLOWANCE', 'MARKETING'].map((budgetCode) => ({ budgetCode, pctCair: budgetCode === 'SUBCON' ? half : '0' }));
     const fr = await ctx.api('pm').post('/fund-requests', { clusterId: cid, lines }).expect(201);
     const exp = await ctx.api('finance').post('/expenses', { clusterId: cid, date: '2026-10-13', category: 'SUBCON_JASA', description: 'DP subcon', amount: '1000000' }).expect(201);
     // belum dicairkan → ditolak
@@ -496,7 +501,16 @@ describe('Tautan ke pengajuan dana: dana cair vs realisasi vs sisa', () => {
       .attach('file', Buffer.from('%PDF-1.4'), { filename: 'bukti.pdf', contentType: 'application/pdf' })
       .expect(200);
 
+    // sebelum ditautkan: expense 1.000.000 dihitung sebagai realisasi di luar pengajuan
+    const subconReal = async () =>
+      (await ctx.api('pm').get(`/clusters/${cid}`).expect(200)).body.usage.find((u: { code: string }) => u.code === 'SUBCON') as { realisasiTanpaPengajuan: string; sudahDicairkan: string; sisa: string };
+    const before = await subconReal();
     await ctx.api('finance').post(`/expenses/${exp.body.id}/fund-request`, { fundRequestId: fr.body.id }).expect(200);
+    // setelah ditautkan ke pengajuan DICAIRKAN: keluar dari realisasi tanpa pengajuan (tidak dihitung dua kali)
+    const after = await subconReal();
+    expect(Number(after.realisasiTanpaPengajuan)).toBe(Number(before.realisasiTanpaPengajuan) - 1000000);
+    expect(after.sudahDicairkan).toBe(before.sudahDicairkan);
+    expect(Number(after.sisa)).toBe(Number(before.sisa) + 1000000);
     const usage = await ctx.api('pm').get(`/fund-requests/${fr.body.id}/realization`).expect(200);
     const subcon = usage.body.rows.find((r: { code: string }) => r.code === 'SUBCON');
     const frDetail = await ctx.api('pm').get(`/fund-requests/${fr.body.id}`).expect(200);
@@ -515,6 +529,9 @@ describe('Tautan ke pengajuan dana: dana cair vs realisasi vs sisa', () => {
     // pengajuan termin berikutnya → lampiran laporan realisasi otomatis
     const next = await ctx.api('pm').post('/fund-requests', { clusterId: cid, lines }).expect(201);
     expect(next.body.terminKe).toBe(2);
+    const nextSubcon = next.body.lines.find((l: { budgetCode: string }) => l.budgetCode === 'SUBCON');
+    expect(nextSubcon.realisasiTanpaPengajuan).toBe(moneyStr(after.realisasiTanpaPengajuan));
+    expect(Number(nextSubcon.sudahTerpakai)).toBe(Number(nextSubcon.sudahDicairkanSebelum) + Number(nextSubcon.realisasiTanpaPengajuan));
     const gen = await ctx.api('pm').post(`/fund-requests/${next.body.id}/attachments/previous-report`).expect(200);
     expect(gen.body.previous.id).toBe(fr.body.id);
     const detail = await ctx.api('pm').get(`/fund-requests/${next.body.id}`).expect(200);
@@ -562,5 +579,70 @@ describe('Rekap memuat realisasi per cluster', () => {
     const s = ev.clusters.find((c: { id: string }) => c.id === sinagar);
     expect(s.realisasi).toMatchObject({ pembayaranBruto: '10000000.00', kasDiterima: '9750000.00' });
     expect(Number(s.realisasi.realisasiBiaya)).toBeGreaterThan(80000000);
+  });
+});
+
+describe('Acuan T — wizard pengajuan memperhitungkan realisasi tanpa pengajuan (Karondoran, CCSI)', () => {
+  type L = { budgetCode: string; budgetAmount: string; pctCair: string; diajukan: string; realisasiTanpaPengajuan: string; sisaTersedia: string; habis: boolean; sudahTerpakai: string };
+  const ln = (body: { lines: L[] }, code: string) => body.lines.find((l) => l.budgetCode === code)!;
+
+  it('draft baru: permit habis (realisasi = budget), marketing over (fee marketing > budget) → diajukan 0; tidak over budget', async () => {
+    const kar = await clusterId(ctx.prisma, 'CCSI', 'Karondoran Langowan Timur (Manado)');
+    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: kar }).expect(201);
+    const permit = ln(fr.body, 'PERMIT');
+    expect(permit).toMatchObject({ budgetAmount: '11964553.71', realisasiTanpaPengajuan: '11964553.71', habis: true, diajukan: '0.00' });
+    expect(Number(permit.pctCair)).toBe(0);
+    expect(Number(permit.sisaTersedia)).toBeLessThan(1);
+    const mkt = ln(fr.body, 'MARKETING');
+    expect(mkt.budgetAmount).toBe('571689.48');
+    expect(Number(mkt.realisasiTanpaPengajuan)).toBeGreaterThan(571689); // porsi fee marketing 4 jt (+ biaya marketing lain)
+    expect(mkt).toMatchObject({ habis: true, diajukan: '0.00' });
+    expect(Number(mkt.sisaTersedia)).toBeLessThan(0);
+    expect(fr.body.overBudgetCodes).toEqual([]);
+    // total diajukan default ≤ Σ sisa tersedia (pos over tidak mengurangi pos lain)
+    expect(Number(fr.body.total.diajukan)).toBeLessThanOrEqual(Number(fr.body.total.sisaTersedia) + 1);
+    expect(Number(fr.body.total.realisasiTanpaPengajuan)).toBeGreaterThan(0);
+    // memaksa permit 100% → over budget
+    const forced = await ctx.api('pm').patch(`/fund-requests/${fr.body.id}`, { lines: [{ budgetCode: 'PERMIT', pctCair: '1' }] }).expect(200);
+    expect(forced.body.overBudgetCodes).toContain('PERMIT');
+    await ctx.api('pm').del(`/fund-requests/${fr.body.id}`).expect(200);
+  });
+
+  it('draft lama (dibuat sebelum realisasi diperhitungkan) dihitung ulang saat dibuka + catatan banner; submit menghapus catatan', async () => {
+    const kar = await clusterId(ctx.prisma, 'CCSI', 'Karondoran Langowan Timur (Manado)');
+    const lines = ['SUBCON', 'PERMIT', 'TICKET', 'PAJAK', 'INDIRECT', 'DIRECT', 'OPS_KANTOR', 'MOTOR_MOBIL', 'HOMEBASE', 'ALLOWANCE', 'MARKETING'].map((budgetCode) => ({ budgetCode, pctCair: '1' }));
+    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: kar, lines }).expect(201);
+    // simulasi snapshot lama: realisasi belum tercatat di baris draft
+    await ctx.prisma.fundRequestLine.updateMany({ where: { fundRequestId: fr.body.id }, data: { realisasiTanpaPengajuan: 0 } });
+    const opened = await ctx.api('pm').get(`/fund-requests/${fr.body.id}`).expect(200);
+    expect(opened.body.recalcNote).toMatch(/^Angka diperbarui karena realisasi sebelumnya/);
+    expect(ln(opened.body, 'PERMIT')).toMatchObject({ diajukan: '0.00', habis: true });
+    expect(opened.body.overBudgetCodes).toEqual([]);
+    const log = await ctx.prisma.auditLog.findFirst({ where: { entity: 'FundRequest', entityId: fr.body.id, field: 'sumber' } });
+    expect(log?.newValue).toBe('hitung ulang realisasi tanpa pengajuan');
+    const sub = await ctx.api('pm').post(`/fund-requests/${fr.body.id}/submit`).expect(200);
+    expect(sub.body.recalcNote).toBeNull();
+    // snapshot saat submit memuat realisasi tanpa pengajuan
+    const line = await ctx.prisma.fundRequestLine.findFirstOrThrow({ where: { fundRequestId: fr.body.id, budgetCode: 'PERMIT' } });
+    expect(line.realisasiTanpaPengajuan.toString()).toBe('11964553.71');
+    await ctx.api('finance').post(`/fund-requests/${fr.body.id}/reject`, { note: 'uji selesai' }).expect(200);
+  });
+
+  it('terminOffset: hanya ADMIN; terminKe = DICAIRKAN + offset + 1', async () => {
+    const sem = await clusterId(ctx.prisma, 'CCSI', 'Padangsari RW 12 & 13 (Semarang)');
+    await ctx.api('pm').patch(`/clusters/${sem}`, { terminOffset: 2 }).expect(403);
+    await ctx.api('admin').patch(`/clusters/${sem}`, { terminOffset: 2 }).expect(200);
+    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: sem }).expect(201);
+    expect(fr.body.terminKe).toBe(3);
+    expect((await ctx.api('pm').get(`/clusters/${sem}`).expect(200)).body.nextTerminKe).toBe(3);
+    await ctx.api('pm').del(`/fund-requests/${fr.body.id}`).expect(200);
+    await ctx.api('admin').patch(`/clusters/${sem}`, { terminOffset: 0 }).expect(200);
+  });
+
+  it('daftar expense realisasi di luar pengajuan per pos (link dari wizard)', async () => {
+    const kar = await clusterId(ctx.prisma, 'CCSI', 'Karondoran Langowan Timur (Manado)');
+    const list = await ctx.api('finance').get(`/expenses?clusterId=${kar}&budgetCode=PERMIT&tanpaPengajuan=true&status=TERVERIFIKASI`).expect(200);
+    expect(list.body.length).toBeGreaterThan(0);
+    expect(list.body.every((e: { fundRequest: unknown; budgetCode: string }) => e.fundRequest === null && e.budgetCode === 'PERMIT')).toBe(true);
   });
 });

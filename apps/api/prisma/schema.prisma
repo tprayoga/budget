@@ -230,6 +230,8 @@ model Cluster {
   permitPoAmount Decimal      @default(0) @db.Decimal(18, 2)
   /// Catatan cluster (keputusan / konfirmasi user)
   note          String?
+  /// Jumlah termin pencairan yang sudah terjadi sebelum sistem (diset ADMIN) — terminKe = DICAIRKAN + offset + 1
+  terminOffset  Int           @default(0)
   pajakRate     Decimal       @db.Decimal(16, 12)
   retensiRate   Decimal       @default(0.10) @db.Decimal(16, 12)
   /// Tanggal mulai implementasi (dari info "Implementasi: dd/mm/yyyy" atau diinput)
@@ -282,6 +284,8 @@ model FundRequest {
   number         String?  @unique
   clusterId      String
   terminKe       Int
+  /// Catatan hitung ulang otomatis draft (mis. angka diperbarui karena realisasi sebelumnya); dihapus saat submit
+  recalcNote     String?
   tanggal        DateTime @db.Date
   periode        String?
   diajukanOlehId String
@@ -335,6 +339,8 @@ model FundRequestLine {
   diajukan              Decimal     @db.Decimal(18, 2)
   sudahDicairkanSebelum Decimal     @default(0) @db.Decimal(18, 2)
   sedangDiproses        Decimal     @default(0) @db.Decimal(18, 2)
+  /// Σ realisasi terverifikasi pos ini yang tidak ditautkan ke pengajuan (snapshot saat submit)
+  realisasiTanpaPengajuan Decimal   @default(0) @db.Decimal(18, 2)
   sisaBudget            Decimal     @db.Decimal(18, 2)
   keterangan            String?
   sortOrder             Int

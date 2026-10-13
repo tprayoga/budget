@@ -79,6 +79,8 @@ export const clusterBaseSchema = z.object({
   info: z.string().trim().max(500).nullish(),
   /** Catatan cluster (keputusan / konfirmasi) */
   note: z.string().trim().max(1000).nullish(),
+  /** Jumlah termin pencairan sebelum sistem (khusus ADMIN). */
+  terminOffset: z.number().int().min(0).max(50).optional(),
   division: z.enum(DIVISIONS).nullish(),
   status: z.enum(CLUSTER_STATUSES).default('PLAN'),
   nilaiPoImpl: zNonNegDecimal,
@@ -232,6 +234,10 @@ export const expenseListQuerySchema = z.object({
   status: z.enum(EXPENSE_STATUSES).optional(),
   category: z.enum(EXPENSE_CATEGORIES).optional(),
   fundRequestId: z.string().optional(),
+  /** Pos budget (FrCode). */
+  budgetCode: z.enum(FR_CODES).optional(),
+  /** true = hanya expense yang tidak ditautkan ke pengajuan (realisasi di luar pengajuan). */
+  tanpaPengajuan: z.enum(['true', 'false']).optional(),
   from: zDate.optional(),
   to: zDate.optional(),
   q: z.string().optional(),
