@@ -1,5 +1,91 @@
 # Changelog
 
+## Fase 2.4 — PPN termin klien, koreksi termin 1, notifikasi per lintasan, margin permit PERMIT (14 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 127 lulus (baru: acuan Q PPN Sinagar, pencocokan, margin permit Kalawiran) |
+| Test API (Jest + PostgreSQL) | 91 lulus (baru: acuan Q via API, acuan R koreksi termin 1, notifikasi lintasan & ringkasan harian) |
+| Test web | 9 lulus |
+| Playwright e2e | 15 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| DB Docker | migrasi + patch `2.4-ppn-notifikasi-tepas` terpasang; retensiAsCost = false (diaudit); **item ditahan = 0** |
+
+### Keputusan yang diterapkan
+
+1. **retensiAsCost = false di DB Docker.**
+   - Diubah lewat `SettingsService.updateGlobal`, jalur yang sama dengan `PUT /settings/global`, memakai script `scripts/set-global-setting.ts`.
+   - AuditLog mencatat `retensiAsCost true → false` dengan `alasan = "keputusan user Fase 2.3"`. Pelakunya tercatat sebagai sistem karena dijalankan operator.
+   - `PUT /settings/global` sekarang menerima `reason` opsional yang ikut dicatat di audit.
+2. **PPN pada termin klien.**
+   - Field baru:
+     - `ClientPayment.amount = DPP`.
+     - `ppnRate`: default dari `Setting.ppnRate` 0,11, bisa diubah di Pengaturan.
+     - `pphRate`: default = pajakRate cluster.
+   - Nilai yang diturunkan: PPN, tagihan (DPP + PPN), PPh, net diharapkan (DPP + PPN − PPh).
+   - PAJAK otomatis = DPP + PPN − diterima.
+   - PPN tidak dihitung sebagai pendapatan maupun biaya. PPN ditampilkan sebagai "PPN keluaran (titipan)" di tab Termin Klien, di realisasi cluster, dan di kolom Rekap per project.
+   - Usulan "cocok" muncul bila net referensi = net diharapkan (± Rp 10). Usulan dikonfirmasi FINANCE per baris (**Konfirmasi**) atau lewat **Terapkan semua yang cocok**.
+   - Referensi Paid tanpa jatuh tempo → status Dibayar dengan badge "tanggal diterima belum diisi". Termin ini juga dihitung di inbox FINANCE.
+3. **Addwork/Deduction mengoreksi termin 1.**
+   - PO ADDWORK/DEDUCTION tidak punya termin sendiri. Termin 1 PO implementasi utama = template% × PO dasar + Σ koreksi.
+   - Termin 1 yang sudah ditagih/dibayar tidak diubah. Koreksi masuk ke termin UNBILLED berikutnya dengan peringatan.
+   - "Hitung ulang termin" menampilkan diff, termasuk termin terpisah lama yang akan **dihapus**.
+4. **TEPAS RW 05 NGAWI-REV.** PO dasar tetap 33.655.100. Cluster punya field baru **`note`** (tampil dan bisa diedit di detail cluster), berisi "PO 33.655.100 dikonfirmasi user 14 Okt 2026; nilai 33.650.100 di kolom Realisasi sheet tidak dipakai". Perubahan tercatat di AuditLog. Tidak ada flag "perlu cek".
+5. **Notifikasi over budget.**
+   - TOTAL cluster ≥ ambang → notifikasi langsung, sekali per lintasan (tabel `OverrunState`).
+   - Pos > ambang → **Ringkasan harian**: 1 notifikasi per user per hari, pos baru ditambahkan.
+   - 62 notifikasi lama dibersihkan, lalu dipindai ulang (hasil di bawah).
+6. **Margin permit hanya PO PERMIT** (`Cluster.permitPoAmount`). SND tetap di nilaiProyek. Kalawiran: −1.081.510,92 (sebelumnya +3.182.648).
+7. Perilaku import "Sama" untuk PO dasar/total disetujui — tidak berubah.
+
+### Hasil di DB Docker
+
+**Notifikasi setelah pindai ulang: 4** (sebelumnya 62)
+
+- 2 × "Over budget: Subfeeder - TEPAS RW 05 NGAWI" untuk PM & Direktur. Total realisasi 105,9% (Rp 9.100.948 / Rp 8.594.920).
+- 2 × "Ringkasan harian over budget 14 Oktober 2026 — 30 pos" untuk PM & Direktur.
+
+**Referensi tagihan RAB yang cocok otomatis (usulan, belum diterapkan)**
+
+| Project | Referensi | Cocok | Tidak cocok |
+|---|---|---|---|
+| ADW | 0 | 0 | 0 |
+| EVANTAMA | 8 | **4** (permit: Sinagar termin 1 Paid & 2 Unpaid, Kersanagara RW 08 termin 1 & 2 Unpaid) | 4 (implementasi) |
+| CCSI | 4 | **0** | 4 |
+
+**Rekap (retensi = piutang, interest 10%, PPN 11%)**
+
+| Project | Nilai proyek | Profit proyeksi | Profit realisasi sekarang | Profit realisasi bila semua yang cocok diterapkan | Margin permit | PPN titipan sekarang → setelah diterapkan |
+|---|---|---|---|---|---|---|
+| ADW | 712.513.400 | 67.702.754 | −375.453.286 | −375.453.286 | 0 | 0 → 0 |
+| EVANTAMA | 236.454.823 | 7.640.924 | −141.175.619 | **−123.165.869** (DPP 18.500.000 − PAJAK 490.250) | −6.451.500 | 0 → **2.035.000** |
+| CCSI | 198.835.655 | 10.332.449 | −128.413.698 | −128.413.698 | **−6.870.920** | 0 → 0 |
+
+- Dari referensi yang cocok, hanya Sinagar permit termin 1 yang Paid. Tiga lainnya Unpaid sehingga hanya berstatus Ditagih (tidak memengaruhi profit).
+- Profit realisasi masih negatif karena hampir belum ada pembayaran klien yang tercatat.
+
+**Preview generate ulang termin ADW (belum diterapkan, menunggu persetujuan)**
+
+Termin 1 dikoreksi di 6 cluster dan 8 termin terpisah dihapus. Termin 2 & 3 tidak berubah, dan semua termin masih UNBILLED (tidak ada peringatan). Angka termin 1 ada di ACCEPTANCE bagian R.
+
+### Yang perlu direview
+
+1. **Persetujuan untuk 2 perubahan data di DB Docker.** Keduanya sudah di-preview tetapi sengaja belum diterapkan, sesuai aturan "dry-run + preview → tunggu persetujuan".
+   - (a) Generate ulang termin 6 cluster ADW (diff di atas).
+   - (b) Terapkan 4 referensi EVANTAMA yang cocok. Sinagar permit termin 1 Paid tidak punya tanggal diterima di RAB: isi tanggalnya, atau biarkan kosong dengan tanda?
+2. **Referensi implementasi EVANTAMA tidak cocok karena PO implementasi masih digabung.** Info cluster memuat dua PO: "PO Cluster … PO Subfeeder …". RAB menagih keduanya terpisah, dan net-nya pas dengan 20% × PO masing-masing:
+   - Sinagar: 18.425.090 / 1,0835 ≈ 17.005.159 → PO cluster ≈ 85.025.796.
+   - Sinagar subfeeder: 5.182.355 → PO ≈ 23.914.881.
+   - Jumlah keduanya ≈ PO gabungan 108.940.677. Kersanagara RW 08 polanya sama (5.819.864 + 1.739.229).
+   - Perlu dipecah jadi 2 PO IMPLEMENTASI per cluster dengan nilai dari dokumen PO? Setelah dipecah, termin & referensi akan cocok.
+3. **Referensi CCSI (INV-RAA/001–004) tidak cocok.** Nilainya sama dengan DPP/PO (mis. 10.212.800 = PO permit Kalawiran), tanpa PPN dan PPh. Apakah invoice CCSI memang tanpa PPN, atau kolom RAB CCSI berisi DPP? Bila tanpa PPN, ppnRate termin CCSI perlu diset 0 (bisa per termin).
+4. **Ringkasan harian berisi 30 pos.** Sebagian besar pos Allowance ADW (alokasi PJD per tanggal implementasi) dan pos kecil CCSI Manado. Ringkasan ini dikirim sekali per lintasan, tidak berulang setiap hari.
+5. **PPh default = pajakRate cluster** (ADW 2,5%, Evantama 2,65%, CCSI 2,5%). Termin lama juga diisi pajakRate cluster lewat migrasi.
+6. **Redis tetap ditunda ke fase deployment.**
+
 ## Fase 2.3 — PO per cluster, margin permit, retensi = piutang, proteksi import, notifikasi (14 Oktober 2026)
 
 ### Status verifikasi

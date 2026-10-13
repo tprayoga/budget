@@ -154,9 +154,10 @@ cluster tetap sama seperti mengalokasikan 10.735.600 sekaligus.
 
 ## K. Pembayaran klien → expense PAJAK otomatis
 
-Termin bruto 10.000.000, diterima 9.735.000 (PAID) → expense PAJAK **265.000** (TERVERIFIKASI, source
-CLIENT_PAYMENT, tidak bisa diedit manual). paidAmount diubah ke 9.750.000 → expense PAJAK menjadi **250.000**.
-Profit realisasi = Σ bruto termin PAID − Σ realisasi terverifikasi (termasuk PAJAK). Kas diterima = Σ paidAmount.
+Diperbarui Fase 2.4 (PPN, lihat bagian Q): termin DPP 10.000.000 + PPN 11% 1.100.000 = tagihan 11.100.000,
+diterima 10.835.000 (PAID) → expense PAJAK **265.000** (TERVERIFIKASI, source CLIENT_PAYMENT, tidak bisa diedit
+manual). paidAmount diubah ke 10.850.000 → expense PAJAK menjadi **250.000**. Profit realisasi = Σ DPP termin PAID −
+Σ realisasi terverifikasi (termasuk PAJAK). Kas diterima = Σ paidAmount (10.850.000); PPN titipan 1.100.000.
 
 ## L. Webhook
 
@@ -275,3 +276,44 @@ sel berumus konstanta dipecah per suku.
 | Import budget (file contoh) | permit Manado & Semarang = **Dilindungi** (diedit di aplikasi); cluster lain Sama; timpa per field hanya ADMIN + alasan |
 | Over budget | realisasi TICKET 250.000 pada budget 0 → notifikasi PM & DIREKTUR sekali (kunci `OVER:{cluster}:{pos}`), muncul di Rekap; expense dihapus → notifikasi dilepas |
 | Referensi tagihan RAB | diterapkan manual: bruto 1.000.000, net 980.000 → PAID, potongan 20.000 jadi expense PAJAK; tidak bisa diterapkan dua kali |
+
+## Q. Fase 2.4 — PPN pada termin klien & pencocokan referensi RAB
+
+Dites di `packages/shared/src/calc/ppn.test.ts`, `apps/api/test/{phase23,realization}.e2e-spec.ts`, `e2e/phase2.spec.ts`.
+
+ClientPayment.amount = **DPP**. ppnRate default dari Setting (0,11); pphRate default = pajakRate cluster.
+
+| Besaran | Rumus | Sinagar permit termin 1 |
+|---|---|---|
+| DPP | 50% × PO permit 37.000.000 | 18.500.000 |
+| PPN keluaran (titipan) | DPP × 11% | **2.035.000** |
+| Tagihan | DPP + PPN | 20.535.000 |
+| PPh | DPP × 2,65% | 490.250 |
+| Net diharapkan | DPP + PPN − PPh | **20.044.750** (= referensi RAB I2628-00139) |
+| PAJAK otomatis saat PAID | DPP + PPN − diterima | **490.250** |
+| Profit realisasi | DPP − realisasi biaya (termasuk PAJAK) | PPN tidak menambah/mengurangi profit |
+
+Pencocokan: referensi cocok bila |net − net diharapkan| ≤ Rp 10. Kandidat ganda → dipilih nomor termin yang sama;
+tetap ganda → "pilih manual". Usulan tidak pernah diterapkan tanpa konfirmasi FINANCE (per baris atau "Terapkan semua
+yang cocok"). Referensi Paid tanpa jatuh tempo → status Dibayar dengan tanda "tanggal diterima belum diisi".
+
+## R. Fase 2.4 — Addwork/Deduction mengoreksi termin 1
+
+Termin 1 PO implementasi utama = template% × PO dasar + Σ ADDWORK/DEDUCTION. PO addwork/deduction tidak punya termin.
+Contoh WANASARI RW 02 (ADW 80/10/10, PO 13.949.300) + addwork 400.000 + deduction −150.000:
+termin 1 = 11.159.440 + 250.000 = **11.409.440**; Σ termin = 14.199.300. Bila termin 1 sudah ditagih/dibayar, koreksi
+masuk ke termin UNBILLED berikutnya dengan peringatan (dites: +100.000 setelah termin 1 ditagih → termin 2 =
+1.394.930 + 350.000). Hitung ulang menghapus termin terpisah gaya Fase 2.3 (diff "Dihapus").
+
+Preview DB Docker (6 cluster ADW, belum diterapkan): termin 1 Batumpang 20.063.840 → 19.307.940; TEPAS RW 07 distribusi
+14.315.920 → 13.257.020; TEPAS RW 07 subfeeder 9.250.880 → 8.169.180; TEPAS RW 05-REV 26.924.080 → 26.591.580;
+TEPAS RW 05 subfeeder 8.581.840 → 8.368.540; Gunungtawang subfeeder 13.265.280 → 13.055.280; 8 termin terpisah dihapus.
+
+## S. Fase 2.4 — margin permit hanya PO PERMIT; notifikasi over budget
+
+- Margin permit = Σ PO PERMIT − biaya permit − pajak × Σ PO PERMIT − interest × biaya permit. SND tetap masuk
+  nilaiProyek. Kalawiran: 10.212.800 − 10.035.446,29 − 255.320 − 1.003.544,63 = **−1.081.510,92** (sebelumnya
+  +3.182.648 karena SND). Total CCSI: −1.081.510,92 − 1.289.409,08 − 4.500.000 = **−6.870.920**.
+- Over budget: TOTAL cluster ≥ ambang → notifikasi langsung PM & DIREKTUR, sekali per lintasan (status OverrunState;
+  turun lalu naik lagi = lintasan baru). Pos > ambang → "Ringkasan harian" (1 notifikasi per user per hari,
+  pos baru ditambahkan, pos yang sama tidak diulang).
