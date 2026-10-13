@@ -41,8 +41,9 @@ export async function clusterId(prisma: PrismaService, projectCode: string, name
 }
 
 /** Parser biner untuk respons file (PDF/XLSX) di supertest. */
-export function binaryParser(res: NodeJS.ReadableStream & { setEncoding(e: string): void }, cb: (e: Error | null, b: Buffer) => void) {
+export const binaryParser: Parameters<request.Test['parse']>[0] = (res, cb) => {
+  const stream = res as unknown as NodeJS.ReadableStream;
   const chunks: Buffer[] = [];
-  res.on('data', (c: Buffer) => chunks.push(c));
-  res.on('end', () => cb(null, Buffer.concat(chunks)));
-}
+  stream.on('data', (c: Buffer) => chunks.push(c));
+  stream.on('end', () => cb(null, Buffer.concat(chunks)));
+};
