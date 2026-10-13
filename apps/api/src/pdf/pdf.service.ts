@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Browser } from 'puppeteer';
 import { renderFundRequestHtml, type FrView } from './fund-request.template';
+import { renderRealizationReportHtml, type RealizationReportData } from './realization-report.template';
 
 /** Render HTML → PDF (A4 portrait) memakai Puppeteer. Browser dipakai ulang antar request. */
 @Injectable()
@@ -48,6 +49,10 @@ export class PdfService implements OnModuleDestroy {
 
   fundRequestPdf(fr: FrView): Promise<Buffer> {
     return this.htmlToPdf(renderFundRequestHtml(fr));
+  }
+
+  realizationReportPdf(data: RealizationReportData): Promise<Buffer> {
+    return this.htmlToPdf(renderRealizationReportHtml(data));
   }
 
   async onModuleDestroy() {

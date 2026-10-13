@@ -30,7 +30,7 @@ import { CurrentUser, Roles } from '../auth/decorators';
 import type { AuthUser } from '../auth/auth.types';
 import { ApiZodBody, ZBody, ZQuery } from '../common/zod';
 import { FundRequestsService } from './fund-requests.service';
-import { MAX_UPLOAD_BYTES, type UploadedFile } from './storage.service';
+import { MAX_UPLOAD_BYTES, type UploadedFile } from '../storage/storage.service';
 import { PdfService } from '../pdf/pdf.service';
 
 const upload = FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES } });
@@ -149,6 +149,30 @@ export class FundRequestsController {
       'Content-Length': String(buf.length),
     });
     res.end(buf);
+  }
+
+  @Get(':id/realization')
+  realization(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.frs.realizationUsage(user, id);
+  }
+
+  @Get(':id/realization-report.pdf')
+  async realizationReport(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() res: Response) {
+    const { label, pdf } = await this.frs.realizationReportPdf(user, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="Laporan_Realisasi_${label.replace(/[^\w-]+/g, '_')}.pdf"`,
+      'Content-Length': String(pdf.length),
+    });
+    res.end(pdf);
+  }
+
+  /** Buat lampiran "Laporan realisasi termin sebelumnya" otomatis (PDF). */
+  @Post(':id/attachments/previous-report')
+  @HttpCode(200)
+  @Roles('PM', 'ADMIN')
+  previousReport(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.frs.generatePreviousReport(user, id);
   }
 
   /** multipart: kind, label?, checked?, file? (lampiran boleh hanya dicentang tanpa file). */

@@ -1,10 +1,11 @@
 /* Seed data demo Fase 1: setting & template default, client, project, user per role, cluster dari file contoh. */
-import { PrismaClient, type BudgetCode, type Role } from '@prisma/client';
+import { PrismaClient, type BudgetCode, type ExpenseCategory, type FrCode, type Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AuditService } from '../src/audit/audit.service';
 import { BudgetImporter } from '../src/import/budget-importer';
+import { generateClientPayments } from '../src/realization/termin-generator';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -28,6 +29,64 @@ const DEFAULT_TEMPLATE = {
 };
 
 const CLIENTS = ['PT ADW', 'PT Evantama Network System', 'CCSI'];
+
+/** Mapping default kategori realisasi → pos budget (bisa diubah di menu Pengaturan). */
+const DEFAULT_CATEGORY_MAPPING: Record<ExpenseCategory, FrCode | null> = {
+  SUBCON_JASA: 'SUBCON',
+  SUBCON_MATERIAL: 'SUBCON',
+  MATERIAL_PEMBELIAN: 'SUBCON',
+  PERMIT: 'PERMIT',
+  OPS: 'OPS_KANTOR',
+  PJD: 'ALLOWANCE',
+  TICKET: 'TICKET',
+  HOMEBASE: 'HOMEBASE',
+  MOTOR_MOBIL: 'MOTOR_MOBIL',
+  PAJAK: 'PAJAK',
+  LAINNYA: null,
+};
+
+/** Template termin pembayaran klien. CCSI belum punya template (termin diinput manual). */
+const TERMIN_TEMPLATES: {
+  client: string;
+  kind: 'IMPLEMENTASI' | 'PERMIT';
+  agingDays: number | null;
+  agingType: 'CALENDAR' | 'WORKING' | null;
+  lines: [string, string][];
+}[] = [
+  {
+    client: 'PT ADW',
+    kind: 'IMPLEMENTASI',
+    agingDays: null,
+    agingType: null,
+    lines: [
+      ['0.8', 'Progress 100%'],
+      ['0.1', 'After Clear Punchlist Customer, ATP'],
+      ['0.1', 'Retensi 2 bulan after ATP/BAST, BAPS'],
+    ],
+  },
+  {
+    client: 'PT Evantama Network System',
+    kind: 'IMPLEMENTASI',
+    agingDays: 30,
+    agingType: 'CALENDAR',
+    lines: [
+      ['0.2', 'Melampirkan PO dan foto di lapangan'],
+      ['0.3', 'CWC dan OPMC'],
+      ['0.4', 'RFSC'],
+      ['0.1', 'FAC/Retention'],
+    ],
+  },
+  {
+    client: 'PT Evantama Network System',
+    kind: 'PERMIT',
+    agingDays: 14,
+    agingType: 'WORKING',
+    lines: [
+      ['0.5', 'Setelah PO release (kuitansi, BA serah terima, foto)'],
+      ['0.5', 'Setelah RFS Permit ditandatangani'],
+    ],
+  },
+];
 
 const PROJECTS = [
   { code: 'ADW', name: 'Proyek FTTH ADW 2026', client: 'PT ADW', year: 2026, pajakRate: null },
@@ -106,6 +165,27 @@ async function main() {
     await prisma.client.upsert({ where: { name }, create: { name }, update: {} });
   }
 
+  // Fase 2: ambang kuning realisasi, mapping kategori, template termin (insert-only)
+  await prisma.setting.updateMany({ where: { projectId: null, realisasiWarnPct: null }, data: { realisasiWarnPct: '0.8' } });
+  for (const [category, budgetCode] of Object.entries(DEFAULT_CATEGORY_MAPPING)) {
+    const exists = await prisma.categoryMapping.findFirst({ where: { projectId: null, category: category as ExpenseCategory } });
+    if (!exists) await prisma.categoryMapping.create({ data: { projectId: null, category: category as ExpenseCategory, budgetCode } });
+  }
+  for (const t of TERMIN_TEMPLATES) {
+    const client = await prisma.client.findUniqueOrThrow({ where: { name: t.client } });
+    const exists = await prisma.terminTemplate.findUnique({ where: { clientId_kind: { clientId: client.id, kind: t.kind } } });
+    if (exists) continue;
+    await prisma.terminTemplate.create({
+      data: {
+        clientId: client.id,
+        kind: t.kind,
+        agingDays: t.agingDays,
+        agingType: t.agingType,
+        lines: { create: t.lines.map(([pct, keterangan], i) => ({ terminKe: i + 1, pct, keterangan })) },
+      },
+    });
+  }
+
   for (const p of PROJECTS) {
     const client = await prisma.client.findUniqueOrThrow({ where: { name: p.client } });
     const project = await prisma.project.upsert({
@@ -143,6 +223,7 @@ async function main() {
   }
 
   if (production && process.env.SEED_SAMPLE_CLUSTERS !== 'true') {
+    for (const c of await prisma.cluster.findMany({ select: { id: true } })) await generateClientPayments(prisma, c.id);
     console.log('Seed selesai (production): master data saja; cluster contoh tidak diimpor.');
     return;
   }
@@ -155,6 +236,11 @@ async function main() {
   const preview = await importer.preview(parsed);
   const newKeys = preview.clusters.filter((c) => c.status === 'NEW').map((c) => c.key);
   const res = newKeys.length ? await importer.commit(parsed, admin?.id ?? null, newKeys) : { created: 0, updated: 0 };
+  // Backfill termin klien untuk cluster yang belum punya (insert-only)
+  let termins = 0;
+  for (const c of await prisma.cluster.findMany({ select: { id: true } })) termins += await generateClientPayments(prisma, c.id);
+  if (termins) console.log(`Termin klien dibuat: ${termins}`);
+
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },
     orderBy: { code: 'asc' },

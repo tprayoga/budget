@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import {
+  AGING_TYPES,
+  ALLOCATION_METHODS,
+  CLIENT_PAYMENT_STATUSES,
+  EXPENSE_CATEGORIES,
+  EXPENSE_STATUSES,
+  TERMIN_KINDS,
   ATTACHMENT_KINDS,
   BUDGET_LINE_CODES,
   CLUSTER_STATUSES,
@@ -96,6 +102,7 @@ export const settingSchema = z.object({
   rekeningBank: z.string().trim().max(80).nullish(),
   rekeningNo: z.string().trim().max(40).nullish(),
   rekeningNama: z.string().trim().max(120).nullish(),
+  realisasiWarnPct: zRate.refine((v) => Number(v) > 0 && Number(v) <= 1, { message: 'Antara 0 dan 100%' }).nullish(),
 });
 export type SettingInput = z.infer<typeof settingSchema>;
 /** Setting global: interestRate & retensiAsCost tidak boleh null. */
@@ -172,3 +179,116 @@ export const importCommitSchema = z.object({
   /** Kunci cluster yang di-commit: "{PROJECT_CODE}::{nama cluster}". Kosong = semua yang berubah/baru. */
   keys: z.array(z.string()).optional(),
 });
+
+// ---------------------------------------------------------------- Fase 2: realisasi
+
+const zDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD');
+
+export const manualAllocationSchema = z.object({ clusterId: z.string().min(1), amount: zNonNegDecimal });
+
+/**
+ * Expense level cluster: isi `clusterId`. Level project: `clusterId` null + `clusterIds` (kosong = semua cluster
+ * aktif project) + `allocationMethod` (EQUAL / PRO_RATA_PO / MANUAL dengan `manualAllocations`).
+ */
+export const expenseBaseSchema = z.object({
+  projectId: z.string().min(1).optional(),
+  clusterId: z.string().min(1).nullish(),
+  clusterIds: z.array(z.string().min(1)).optional(),
+  allocationMethod: z.enum(ALLOCATION_METHODS).nullish(),
+  manualAllocations: z.array(manualAllocationSchema).optional(),
+  date: zDate,
+  category: z.enum(EXPENSE_CATEGORIES),
+  budgetCode: z.enum(FR_CODES).nullish(),
+  description: z.string().trim().min(2, 'Keterangan wajib diisi').max(500),
+  amount: zNonNegDecimal.refine((v) => Number(v) > 0, { message: 'Nominal harus > 0' }),
+  termin: z.string().trim().max(60).nullish(),
+  vendor: z.string().trim().max(160).nullish(),
+  invoiceNo: z.string().trim().max(80).nullish(),
+  fundRequestId: z.string().nullish(),
+  /** MOBILE = input cepat dari HP */
+  source: z.enum(['MANUAL', 'MOBILE']).optional(),
+});
+export const expenseCreateSchema = expenseBaseSchema.refine((v) => v.clusterId || v.projectId, {
+  message: 'Pilih cluster atau project',
+});
+export type ExpenseCreateInput = z.infer<typeof expenseCreateSchema>;
+export const expenseUpdateSchema = expenseBaseSchema.partial();
+export type ExpenseUpdateInput = z.infer<typeof expenseUpdateSchema>;
+
+export const expenseListQuerySchema = z.object({
+  projectId: z.string().optional(),
+  clusterId: z.string().optional(),
+  status: z.enum(EXPENSE_STATUSES).optional(),
+  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  fundRequestId: z.string().optional(),
+  from: zDate.optional(),
+  to: zDate.optional(),
+  q: z.string().optional(),
+});
+
+export const expenseRejectSchema = z.object({ note: z.string().trim().min(3, 'Alasan wajib diisi').max(500) });
+export const expenseLinkSchema = z.object({ fundRequestId: z.string().nullable() });
+
+export const clientPaymentUpdateSchema = z.object({
+  amount: zNonNegDecimal.optional(),
+  keterangan: z.string().trim().max(300).nullish(),
+  invoiceNo: z.string().trim().max(80).nullish(),
+  invoiceDate: zDate.nullish(),
+  /** hanya dipakai bila template tidak punya aging */
+  dueDate: zDate.nullish(),
+  paidDate: zDate.nullish(),
+  paidAmount: zNonNegDecimal.nullish(),
+  status: z.enum(CLIENT_PAYMENT_STATUSES).optional(),
+});
+export type ClientPaymentUpdateInput = z.infer<typeof clientPaymentUpdateSchema>;
+
+export const clientPaymentCreateSchema = z.object({
+  kind: z.enum(TERMIN_KINDS),
+  termin: z.number().int().min(1).max(20),
+  amount: zNonNegDecimal,
+  pct: zRate.nullish(),
+  keterangan: z.string().trim().max(300).nullish(),
+});
+
+export const terminTemplateSchema = z.object({
+  clientId: z.string().min(1),
+  kind: z.enum(TERMIN_KINDS),
+  agingDays: z.number().int().min(0).max(365).nullable(),
+  agingType: z.enum(AGING_TYPES).nullable(),
+  lines: z
+    .array(z.object({ pct: zRate, keterangan: z.string().trim().max(300).nullish() }))
+    .min(1)
+    .refine((ls) => Math.abs(ls.reduce((a, l) => a + Number(l.pct), 0) - 1) < 1e-9, { message: 'Total persentase termin harus 100%' }),
+});
+
+export const categoryMappingSchema = z.array(
+  z.object({ category: z.enum(EXPENSE_CATEGORIES), budgetCode: z.enum(FR_CODES).nullable() }),
+);
+
+export const holidaySchema = z.object({ date: zDate, name: z.string().trim().min(2).max(120) });
+
+export const apiKeyCreateSchema = z.object({ name: z.string().trim().min(2).max(80) });
+
+/** Webhook bot (Telegram/n8n). Foto via multipart `foto` atau JSON `fotoBase64` (boleh data URL). */
+export const webhookExpenseSchema = z.object({
+  cluster: z.string().trim().min(1),
+  kategori: z.string().trim().min(2),
+  nominal: zNonNegDecimal.refine((v) => Number(v) > 0, { message: 'Nominal harus > 0' }),
+  tanggal: zDate,
+  keterangan: z.string().trim().max(500).nullish(),
+  externalId: z.string().trim().max(120).nullish(),
+  fotoBase64: z.string().max(8_000_000).nullish(),
+  fotoNama: z.string().trim().max(120).nullish(),
+});
+export type WebhookExpenseInput = z.infer<typeof webhookExpenseSchema>;
+
+/** Keputusan pemetaan import RAB, per kunci grup/blok atau per item. */
+export const rabDecisionSchema = z.object({
+  scope: z.enum(['CLUSTER', 'PROJECT', 'SKIP']),
+  clusterId: z.string().nullish(),
+  clusterIds: z.array(z.string()).optional(),
+  method: z.enum(ALLOCATION_METHODS).nullish(),
+  category: z.enum(EXPENSE_CATEGORIES).nullish(),
+});
+export type RabDecision = z.infer<typeof rabDecisionSchema>;
+export const rabCommitSchema = z.object({ decisions: z.record(rabDecisionSchema).optional() });

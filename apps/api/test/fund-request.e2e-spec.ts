@@ -59,13 +59,22 @@ describe('Acceptance A — form pengajuan 100% lewat API', () => {
 describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiproses', () => {
   let fr1: string;
   let fr3: string;
+  /** Nomor urut FPD ADW bulan ini sebelum test (spec lain bisa sudah memakai nomor). */
+  let base = 0;
+  const fpd = (n: number) => `FPD/ADW/2026/10/${String(base + n).padStart(3, '0')}`;
 
-  it('pengajuan #1 50% → submit → nomor FPD/ADW/2026/10/001', async () => {
+  beforeAll(async () => {
+    const adw = await ctx.prisma.project.findUniqueOrThrow({ where: { code: 'ADW' } });
+    const seq = await ctx.prisma.fpdSequence.findUnique({ where: { projectId_year_month: { projectId: adw.id, year: 2026, month: 10 } } });
+    base = seq?.lastSeq ?? 0;
+  });
+
+  it('pengajuan #1 50% → submit → nomor FPD/ADW/2026/10/{seq berikutnya}', async () => {
     const res = await ctx.api('pm').post('/fund-requests', { clusterId: wanasari, tanggal: '2026-10-13', lines: pct('0.5') }).expect(201);
     fr1 = res.body.id;
     expect(res.body.total.diajukan).toBe('3854083.00');
     const sub = await ctx.api('pm').post(`/fund-requests/${fr1}/submit`).expect(200);
-    expect(sub.body.number).toBe('FPD/ADW/2026/10/001');
+    expect(sub.body.number).toBe(fpd(1));
     expect(sub.body.status).toBe('DIAJUKAN');
     expect(sub.body.terminKe).toBe(1);
     expect(sub.body.signatures.DIAJUKAN.name).toBe('Andi Pratama');
@@ -117,7 +126,7 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
     expect(fr.total.diajukan).toBe('3854087.00');
     expect(fr.lines.every((l: { sisaBudget: string }) => l.sisaBudget === '0.00')).toBe(true);
     const sub = await ctx.api('pm').post(`/fund-requests/${fr3}/submit`).expect(200);
-    expect(sub.body.number).toBe('FPD/ADW/2026/10/002');
+    expect(sub.body.number).toBe(fpd(2));
   });
 
   it('tolak → revisi → DRAFT → submit ulang memakai nomor lama', async () => {
@@ -129,14 +138,14 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
     expect(pmInbox.body.items.map((i: { id: string }) => i.id)).toContain(fr3);
     const rev = await ctx.api('pm').post(`/fund-requests/${fr3}/revise`).expect(200);
     expect(rev.body.status).toBe('DRAFT');
-    expect(rev.body.number).toBe('FPD/ADW/2026/10/002');
+    expect(rev.body.number).toBe(fpd(2));
     await ctx.api('pm').patch(`/fund-requests/${fr3}`, { justifikasi: 'Termin pelunasan WANASARI RW 01.' }).expect(200);
     const sub = await ctx.api('pm').post(`/fund-requests/${fr3}/submit`).expect(200);
-    expect(sub.body.number).toBe('FPD/ADW/2026/10/002');
+    expect(sub.body.number).toBe(fpd(2));
     // tanda tangan hanya dari siklus terakhir
     expect(sub.body.signatures.PERIKSA_FINANCE).toBeNull();
     const seq = await ctx.prisma.fpdSequence.findMany();
-    expect(seq.find((s) => s.month === 10)?.lastSeq).toBe(2);
+    expect(seq.find((s) => s.month === 10 && s.projectId === sub.body.project.id)?.lastSeq).toBe(base + 2);
   });
 
   it('snapshot dibekukan saat submit: perubahan setting/budget tidak mengubah pengajuan', async () => {
@@ -161,7 +170,7 @@ describe('Acceptance F — pencairan bertahap 50% + 50% + validasi sedangDiprose
     expect(fields).toContain('status');
     expect(fields).toContain('line.PAJAK.diajukan');
     expect(fields).toContain('justifikasi');
-    expect(logs.find((l) => l.field === 'number')?.newValue).toBe('FPD/ADW/2026/10/002');
+    expect(logs.find((l) => l.field === 'number')?.newValue).toBe(fpd(2));
   });
 
   it('PDF dapat diunduh (A4)', async () => {

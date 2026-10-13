@@ -24,13 +24,19 @@ export class StorageService {
     return abs;
   }
 
+  /** Simpan lampiran pengajuan dana. */
   async save(fundRequestId: string, file: UploadedFile) {
+    return this.saveIn('fr', fundRequestId, file);
+  }
+
+  /** Simpan file di folder `{area}/{ownerId}/`. */
+  async saveIn(area: 'fr' | 'expense', ownerId: string, file: UploadedFile) {
     if (!ALLOWED.test(file.mimetype)) {
       throw new BadRequestException('Tipe file tidak didukung (PDF, gambar, Excel, Word)');
     }
     if (file.size > MAX_UPLOAD_BYTES) throw new BadRequestException('Ukuran file maksimal 10 MB');
     const safe = file.originalname.replace(/[^\w.-]+/g, '_').slice(-80) || 'file';
-    const rel = path.posix.join('fr', fundRequestId.replace(/[^\w-]/g, ''), `${randomBytes(6).toString('hex')}-${safe}`);
+    const rel = path.posix.join(area, ownerId.replace(/[^\w-]/g, ''), `${randomBytes(6).toString('hex')}-${safe}`);
     const abs = this.absolute(rel);
     await mkdir(path.dirname(abs), { recursive: true });
     await writeFile(abs, file.buffer);

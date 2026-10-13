@@ -20,6 +20,7 @@ import { TemplatesService } from '../settings/templates.service';
 import type { AuthUser } from '../auth/auth.types';
 import { money, rate } from '../common/decimal';
 import { clusterDto, type ClusterWithLines } from '../budget/budget.mapper';
+import { generateClientPayments } from '../realization/termin-generator';
 
 const CLUSTER_FIELDS = [
   'name',
@@ -167,6 +168,8 @@ export class ClustersService {
         });
         const dto = clusterDto(created);
         await this.audit.diff(tx, user.id, 'Cluster', created.id, null, flatForAudit(dto)!);
+        // termin pembayaran klien otomatis dari template client project
+        await generateClientPayments(tx, created.id);
         return dto;
       });
     } catch (e) {
@@ -250,6 +253,9 @@ export class ClustersService {
     await this.access.assertCluster(user, id);
     const used = await this.prisma.fundRequest.count({ where: { clusterId: id } });
     if (used) throw new ConflictException('Cluster sudah memiliki pengajuan dana; ubah status menjadi CANCELLED');
+    const realized = await this.prisma.expenseAllocation.count({ where: { clusterId: id } });
+    const billed = await this.prisma.clientPayment.count({ where: { clusterId: id, status: { not: 'UNBILLED' } } });
+    if (realized || billed) throw new ConflictException('Cluster sudah memiliki realisasi/tagihan klien; ubah status menjadi CANCELLED');
     await this.prisma.$transaction(async (tx) => {
       const before = await this.load(id, tx);
       await tx.cluster.delete({ where: { id } });

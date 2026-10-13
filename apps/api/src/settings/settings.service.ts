@@ -6,7 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import { rate, s } from '../common/decimal';
 
 /** Nilai awal baris Setting global (default model Setting sesuai spesifikasi). */
-const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: true } as const;
+const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: true, realisasiWarnPct: '0.8' } as const;
 
 export interface EffectiveSetting {
   interestRate: string;
@@ -14,11 +14,13 @@ export interface EffectiveSetting {
   rekeningBank: string | null;
   rekeningNo: string | null;
   rekeningNama: string | null;
+  /** Ambang kuning realisasi (rasio). */
+  realisasiWarnPct: string;
   /** Field yang di-override di level project. */
   overridden: (keyof SettingInput)[];
 }
 
-type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama';
+type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama' | 'realisasiWarnPct';
 
 function dto(row: Setting | null) {
   return row
@@ -30,6 +32,7 @@ function dto(row: Setting | null) {
         rekeningBank: row.rekeningBank,
         rekeningNo: row.rekeningNo,
         rekeningNama: row.rekeningNama,
+        realisasiWarnPct: s(row.realisasiWarnPct),
         updatedAt: row.updatedAt,
       }
     : null;
@@ -80,6 +83,7 @@ export class SettingsService {
       rekeningBank: pick('rekeningBank'),
       rekeningNo: pick('rekeningNo'),
       rekeningNama: pick('rekeningNama'),
+      realisasiWarnPct: (pick('realisasiWarnPct') ?? GLOBAL_DEFAULTS.realisasiWarnPct).toString(),
       overridden,
     };
   }
@@ -112,6 +116,7 @@ export class SettingsService {
     const data: Partial<Pick<Setting, SettingField>> = {};
     if (input.interestRate !== undefined) data.interestRate = input.interestRate === null ? null : rate(input.interestRate);
     if (input.retensiAsCost !== undefined) data.retensiAsCost = input.retensiAsCost;
+    if (input.realisasiWarnPct !== undefined) data.realisasiWarnPct = input.realisasiWarnPct === null ? null : rate(input.realisasiWarnPct);
     for (const k of ['rekeningBank', 'rekeningNo', 'rekeningNama'] as const) {
       if (input[k] !== undefined) data[k] = input[k] || null;
     }

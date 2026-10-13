@@ -11,6 +11,7 @@ import { AccessService } from '../access/access.service';
 import { SettingsService, type EffectiveSetting } from '../settings/settings.service';
 import type { AuthUser } from '../auth/auth.types';
 import { clusterCalcInput, clusterDto, type ClusterWithLines } from './budget.mapper';
+import { RealizationService } from '../realization/realization.service';
 
 /** Preview what-if: menimpa setting global tanpa menyimpan. */
 export interface BudgetPreview {
@@ -24,6 +25,7 @@ export class BudgetService {
     private readonly prisma: PrismaService,
     private readonly access: AccessService,
     private readonly settings: SettingsService,
+    private readonly realization: RealizationService,
   ) {}
 
   /** Setting efektif project dengan preview (preview menggantikan nilai global; override project tetap berlaku). */
@@ -79,6 +81,7 @@ export class BudgetService {
     });
     const allResults: ClusterCalcResult[] = [];
     const out = [];
+    const realisasi = await this.realization.summaryByCluster(projects.flatMap((p) => p.clusters.map((c) => c.id)));
     for (const p of projects) {
       const setting = await this.settingFor(p.id, preview);
       const results = p.clusters.map((c) => this.calc(c, setting));
@@ -86,7 +89,7 @@ export class BudgetService {
       out.push({
         project: { id: p.id, code: p.code, name: p.name, year: p.year, client: p.client },
         setting,
-        clusters: p.clusters.map((c, i) => ({ ...clusterDto(c), calc: clusterResultToDto(results[i]) })),
+        clusters: p.clusters.map((c, i) => ({ ...clusterDto(c), calc: clusterResultToDto(results[i]), realisasi: realisasi.get(c.id)! })),
         total: projectTotalToDto(calcProjectTotal(results)),
       });
     }

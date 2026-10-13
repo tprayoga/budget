@@ -43,7 +43,10 @@ import { SettingsService } from '../settings/settings.service';
 import type { AuthUser } from '../auth/auth.types';
 import { money, rate, s } from '../common/decimal';
 import { clusterCalcInput } from '../budget/budget.mapper';
-import { StorageService, type UploadedFile } from './storage.service';
+import { StorageService, type UploadedFile } from '../storage/storage.service';
+import { RealizationService } from '../realization/realization.service';
+import { PdfService } from '../pdf/pdf.service';
+import type { RealizationReportData } from '../pdf/realization-report.template';
 
 const DETAIL_INCLUDE = {
   lines: true,
@@ -111,6 +114,8 @@ export class FundRequestsService {
     private readonly access: AccessService,
     private readonly settings: SettingsService,
     private readonly storage: StorageService,
+    private readonly realization: RealizationService,
+    private readonly pdf: PdfService,
   ) {}
 
   // ---------------------------------------------------------------- query
@@ -857,6 +862,99 @@ export class FundRequestsService {
     const att = await this.prisma.attachment.findFirst({ where: { id: attId, fundRequestId: id } });
     if (!att?.fileUrl) throw new NotFoundException('File tidak ditemukan');
     return { path: this.storage.absolute(att.fileUrl), fileName: att.fileName ?? 'lampiran', mimeType: att.mimeType };
+  }
+
+  // ---------------------------------------------------------------- realisasi (Fase 2)
+
+  /** Dana cair vs realisasi vs sisa dana di tangan + daftar expense yang ditautkan. */
+  async realizationUsage(user: AuthUser, id: string) {
+    const fr = await this.loadVisible(user, id);
+    const usage = await this.realization.fundRequestUsage(fr.id);
+    const expenses = await this.prisma.expense.findMany({
+      where: { fundRequestId: fr.id },
+      include: { allocations: { where: { clusterId: fr.clusterId } } },
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+    });
+    return {
+      ...usage,
+      expenses: expenses.map((e) => ({
+        id: e.id,
+        date: isoDate(e.date),
+        category: e.category,
+        budgetCode: e.budgetCode,
+        description: e.description,
+        vendor: e.vendor,
+        invoiceNo: e.invoiceNo,
+        status: e.status,
+        amount: s(e.amount),
+        clusterAmount: s(e.allocations[0]?.amount ?? null),
+      })),
+    };
+  }
+
+  async realizationReportData(user: AuthUser, id: string): Promise<RealizationReportData> {
+    const fr = await this.loadVisible(user, id);
+    const usage = await this.realizationUsage(user, id);
+    return {
+      fr: {
+        label: fr.number ?? draftLabel(fr.id),
+        terminKe: fr.terminKe,
+        cairTanggal: isoDate(fr.cairTanggal),
+        cluster: fr.cluster.name,
+        project: `${fr.cluster.project.code} — ${fr.cluster.project.name}`,
+        client: fr.cluster.project.client.name,
+      },
+      usage: { rows: usage.rows, total: usage.total },
+      expenses: usage.expenses
+        .filter((e) => e.status === 'TERVERIFIKASI')
+        .map((e) => ({ date: e.date, category: e.category, description: e.description, vendor: e.vendor, invoiceNo: e.invoiceNo, amount: e.clusterAmount ?? e.amount ?? '0' })),
+      generatedAt: new Date(),
+      generatedBy: user.name,
+    };
+  }
+
+  async realizationReportPdf(user: AuthUser, id: string) {
+    const data = await this.realizationReportData(user, id);
+    return { label: data.fr.label, pdf: await this.pdf.realizationReportPdf(data) };
+  }
+
+  /**
+   * Lampiran otomatis "Laporan realisasi termin sebelumnya": PDF realisasi pengajuan DICAIRKAN terakhir
+   * pada cluster yang sama, disimpan sebagai lampiran LAPORAN_TERMIN_SEBELUMNYA (tercentang).
+   */
+  async generatePreviousReport(user: AuthUser, id: string) {
+    const fr = await this.loadVisible(user, id);
+    if (fr.status !== 'DRAFT') throw new ConflictException('Lampiran hanya bisa diubah saat DRAFT');
+    this.assertOwner(user, fr);
+    const prev = await this.prisma.fundRequest.findFirst({
+      where: { clusterId: fr.clusterId, status: 'DICAIRKAN', id: { not: fr.id } },
+      orderBy: [{ cairTanggal: 'desc' }, { submittedAt: 'desc' }],
+    });
+    if (!prev) throw new NotFoundException('Belum ada termin sebelumnya yang dicairkan untuk cluster ini');
+    const { label, pdf } = await this.realizationReportPdf(user, prev.id);
+    const fileName = `Laporan_Realisasi_${label.replace(/[^\w-]+/g, '_')}.pdf`;
+    const stored = await this.storage.save(fr.id, { originalname: fileName, mimetype: 'application/pdf', size: pdf.length, buffer: pdf });
+    const old = await this.prisma.attachment.findMany({ where: { fundRequestId: fr.id, kind: 'LAPORAN_TERMIN_SEBELUMNYA', label: { startsWith: 'Laporan realisasi' } } });
+    const att = await this.prisma.$transaction(async (tx) => {
+      await tx.attachment.deleteMany({ where: { id: { in: old.map((o) => o.id) } } });
+      const a = await tx.attachment.create({
+        data: {
+          fundRequestId: fr.id,
+          kind: 'LAPORAN_TERMIN_SEBELUMNYA',
+          label: `Laporan realisasi ${label}`,
+          fileUrl: stored.fileUrl,
+          fileName: stored.fileName,
+          mimeType: stored.mimeType,
+          size: stored.size,
+          checked: true,
+          uploadedById: user.id,
+        },
+      });
+      await this.audit.diff(tx, user.id, 'Attachment', a.id, null, { fundRequestId: fr.id, kind: a.kind, fileName: a.fileName, sumber: `otomatis dari ${label}` });
+      return a;
+    });
+    for (const o of old) if (o.fileUrl) await this.storage.remove(o.fileUrl);
+    return { id: att.id, fileName: att.fileName, previous: { id: prev.id, number: prev.number } };
   }
 
   /** Muat detail untuk PDF/export (sudah dicek akses). */

@@ -6,6 +6,8 @@ import cookieParser from 'cookie-parser';
 /** Konfigurasi bersama untuk main.ts dan test e2e. */
 export function setupApp(app: INestApplication) {
   app.use(cookieParser());
+  // foto nota base64 dari webhook bisa beberapa MB
+  (app as NestExpressApplication).useBodyParser('json', { limit: '12mb' });
   // di belakang nginx: pakai X-Forwarded-For untuk IP klien (rate limit login)
   (app as NestExpressApplication).set('trust proxy', 1);
   app.setGlobalPrefix('api');

@@ -117,6 +117,9 @@ model User {
   approvals     Approval[]
   auditLogs     AuditLog[]
   attachments   Attachment[]
+  expensesCreated  Expense[]      @relation("ExpenseCreatedBy")
+  expensesVerified Expense[]      @relation("ExpenseVerifiedBy")
+  apiKeys          ApiKey[]
 }
 
 model RefreshToken {
@@ -136,6 +139,7 @@ model Client {
   name      String    @unique
   createdAt DateTime  @default(now())
   projects  Project[]
+  terminTemplates TerminTemplate[]
 }
 
 model Project {
@@ -153,6 +157,9 @@ model Project {
   template     BudgetTemplate?
   members      ProjectMember[]
   fpdSequences FpdSequence[]
+  expenses     Expense[]
+  categoryMappings CategoryMapping[]
+  cashLedger   CashLedger[]
 }
 
 /// Akses project per user. Dipakai untuk membatasi role INVESTOR.
@@ -176,6 +183,8 @@ model Setting {
   rekeningBank  String?
   rekeningNo    String?
   rekeningNama  String?
+  /// Ambang kuning realisasi (% terpakai), mis. 0.8 = 80%
+  realisasiWarnPct Decimal? @db.Decimal(16, 12)
   updatedAt     DateTime @updatedAt
   project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -222,6 +231,9 @@ model Cluster {
   project      Project       @relation(fields: [projectId], references: [id])
   budgetLines  BudgetLine[]
   fundRequests FundRequest[]
+  expenses     Expense[]
+  allocations  ExpenseAllocation[]
+  clientPayments ClientPayment[]
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -294,6 +306,7 @@ model FundRequest {
   approvals    Approval[]
   attachments  Attachment[]      @relation("FrAttachments")
   cairBukti    Attachment?       @relation("CairBukti", fields: [cairBuktiAttachmentId], references: [id])
+  expenses     Expense[]
 
   @@index([clusterId, status])
   @@index([status])
@@ -365,4 +378,231 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([at])
+}
+
+// =====================================================================================
+// Fase 2 — Realisasi biaya vs budget
+// =====================================================================================
+
+enum ExpenseCategory {
+  SUBCON_JASA
+  SUBCON_MATERIAL
+  PERMIT
+  OPS
+  PJD
+  TICKET
+  HOMEBASE
+  MOTOR_MOBIL
+  MATERIAL_PEMBELIAN
+  PAJAK
+  LAINNYA
+}
+
+enum ExpenseStatus {
+  PERLU_VERIFIKASI
+  TERVERIFIKASI
+  DITOLAK
+}
+
+enum ExpenseSource {
+  MANUAL
+  MOBILE
+  WEBHOOK
+  IMPORT_RAB
+  CLIENT_PAYMENT
+}
+
+enum AllocationMethod {
+  EQUAL
+  PRO_RATA_PO
+  MANUAL
+}
+
+enum TerminKind {
+  IMPLEMENTASI
+  PERMIT
+}
+
+enum AgingType {
+  CALENDAR
+  WORKING
+}
+
+enum ClientPaymentStatus {
+  UNBILLED
+  INVOICED
+  PAID
+}
+
+/// Realisasi biaya. clusterId null = biaya level project yang dialokasikan ke beberapa cluster.
+/// Laporan per cluster SELALU membaca ExpenseAllocation (expense level cluster = 1 alokasi 100%).
+model Expense {
+  id               String            @id @default(cuid())
+  projectId        String
+  clusterId        String?
+  /// null hanya untuk data import yang tanggalnya tidak ada di sheet
+  date             DateTime?         @db.Date
+  periodLabel      String?
+  category         ExpenseCategory
+  budgetCode       FrCode
+  description      String
+  amount           Decimal           @db.Decimal(18, 2)
+  termin           String?
+  vendor           String?
+  invoiceNo        String?
+  attachmentUrl    String?
+  attachmentName   String?
+  attachmentMime   String?
+  fundRequestId    String?
+  status           ExpenseStatus
+  source           ExpenseSource
+  /// Kunci idempotensi: RAB:{sheet}!{sel}, WEBHOOK:{key}:{externalId}, CLIENT_PAYMENT:{paymentId}
+  sourceRef        String?           @unique
+  allocationMethod AllocationMethod?
+  rejectNote       String?
+  createdById      String?
+  apiKeyId         String?
+  verifiedById     String?
+  verifiedAt       DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  project     Project             @relation(fields: [projectId], references: [id])
+  cluster     Cluster?            @relation(fields: [clusterId], references: [id])
+  fundRequest FundRequest?        @relation(fields: [fundRequestId], references: [id])
+  createdBy   User?               @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  verifiedBy  User?               @relation("ExpenseVerifiedBy", fields: [verifiedById], references: [id])
+  apiKey      ApiKey?             @relation(fields: [apiKeyId], references: [id])
+  allocations ExpenseAllocation[]
+
+  @@index([projectId, status])
+  @@index([clusterId])
+  @@index([fundRequestId])
+}
+
+model ExpenseAllocation {
+  id        String  @id @default(cuid())
+  expenseId String
+  clusterId String
+  amount    Decimal @db.Decimal(18, 2)
+  pct       Decimal @db.Decimal(16, 12)
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  cluster   Cluster @relation(fields: [clusterId], references: [id])
+
+  @@unique([expenseId, clusterId])
+  @@index([clusterId])
+}
+
+/// Mapping default kategori → pos budget. projectId null = global; mapping project meng-override.
+model CategoryMapping {
+  id         String          @id @default(cuid())
+  projectId  String?
+  category   ExpenseCategory
+  /// null = wajib dipilih manual saat input (mis. LAINNYA)
+  budgetCode FrCode?
+  project    Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, category])
+}
+
+model TerminTemplate {
+  id        String               @id @default(cuid())
+  clientId  String
+  kind      TerminKind
+  agingDays Int?
+  agingType AgingType?
+  updatedAt DateTime             @updatedAt
+  client    Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lines     TerminTemplateLine[]
+
+  @@unique([clientId, kind])
+}
+
+model TerminTemplateLine {
+  id         String         @id @default(cuid())
+  templateId String
+  terminKe   Int
+  pct        Decimal        @db.Decimal(16, 12)
+  keterangan String?
+  template   TerminTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, terminKe])
+}
+
+/// Termin pembayaran klien per cluster. amount = bruto; paidAmount = yang benar-benar diterima.
+model ClientPayment {
+  id          String              @id @default(cuid())
+  clusterId   String
+  kind        TerminKind
+  termin      Int
+  pct         Decimal?            @db.Decimal(16, 12)
+  amount      Decimal             @db.Decimal(18, 2)
+  keterangan  String?
+  invoiceNo   String?
+  invoiceDate DateTime?           @db.Date
+  dueDate     DateTime?           @db.Date
+  paidDate    DateTime?           @db.Date
+  paidAmount  Decimal?            @db.Decimal(18, 2)
+  status      ClientPaymentStatus @default(UNBILLED)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  cluster     Cluster             @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+
+  @@unique([clusterId, kind, termin])
+}
+
+model HariLibur {
+  id   String   @id @default(cuid())
+  date DateTime @unique @db.Date
+  name String
+}
+
+/// Buku kas (sheet TELCO - OPS). Hanya referensi/rekonsiliasi — tidak dihitung sebagai realisasi.
+model CashLedger {
+  id           String   @id @default(cuid())
+  date         DateTime @db.Date
+  description  String
+  projectId    String?
+  projectLabel String?
+  cashAccount  String?
+  accountName  String?
+  cashIn       Decimal  @default(0) @db.Decimal(18, 2)
+  cashOut      Decimal  @default(0) @db.Decimal(18, 2)
+  sourceKey    String   @unique
+  sourceSheet  String?
+  sourceRow    Int?
+  importedAt   DateTime @default(now())
+  project      Project? @relation(fields: [projectId], references: [id])
+
+  @@index([projectId, date])
+}
+
+/// API key untuk webhook (bot Telegram/n8n). Key disimpan sebagai hash SHA-256; ditampilkan sekali saat dibuat.
+model ApiKey {
+  id          String    @id @default(cuid())
+  name        String
+  prefix      String
+  keyHash     String    @unique
+  scopes      String[]
+  createdById String
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  createdBy   User      @relation(fields: [createdById], references: [id])
+  expenses    Expense[]
+}
+
+/// Keputusan pemetaan manual saat import RAB, diingat untuk import berikutnya.
+model ImportMappingRule {
+  id          String            @id @default(cuid())
+  sourceKey   String            @unique
+  projectId   String
+  /// CLUSTER | PROJECT | SKIP
+  scope       String
+  clusterId   String?
+  clusterIds  String[]
+  method      AllocationMethod?
+  category    ExpenseCategory?
+  createdById String?
+  updatedAt   DateTime          @updatedAt
 }
