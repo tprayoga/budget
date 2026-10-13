@@ -52,5 +52,12 @@
     "exceljs": {
       "optional": true
     }
+  },
+  "typesVersions": {
+    "*": {
+      "xlsx": [
+        "./dist/xlsx.d.ts"
+      ]
+    }
   }
 }

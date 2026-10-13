@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-indotek}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-indotek}
+      POSTGRES_DB: ${POSTGRES_DB:-indotek_budget}
+      TZ: Asia/Jakarta
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-indotek}']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-indotek}:${POSTGRES_PASSWORD:-indotek}@postgres:5432/${POSTGRES_DB:-indotek_budget}?schema=public
+      API_PORT: 3000
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret-ganti-di-produksi}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-ganti-di-produksi}
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_TTL_DAYS: 7
+      UPLOAD_DIR: /app/storage/uploads
+      CORS_ORIGIN: http://localhost:8080
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      SEED_PASSWORD: ${SEED_PASSWORD:-Indotek123!}
+      TZ: Asia/Jakarta
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./storage/uploads:/app/storage/uploads
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - '8080:80'
+
+volumes:
+  pgdata:

@@ -79,20 +79,27 @@ export type ClusterUpdateInput = z.infer<typeof clusterUpdateSchema>;
 
 export const clusterDuplicateSchema = z.object({ name: z.string().trim().min(2).max(200) });
 
+/** Setting project: null = kembali ikut setting global. */
 export const settingSchema = z.object({
-  interestRate: zRate.optional(),
-  retensiAsCost: z.boolean().optional(),
+  interestRate: zRate.nullish(),
+  retensiAsCost: z.boolean().nullish(),
   rekeningBank: z.string().trim().max(80).nullish(),
   rekeningNo: z.string().trim().max(40).nullish(),
   rekeningNama: z.string().trim().max(120).nullish(),
 });
 export type SettingInput = z.infer<typeof settingSchema>;
+/** Setting global: interestRate & retensiAsCost tidak boleh null. */
+export const settingGlobalSchema = settingSchema.extend({
+  interestRate: zRate.optional(),
+  retensiAsCost: z.boolean().optional(),
+});
 
 export const templateSchema = z.object({
-  pajakRate: zRate,
-  retensiRate: zRate,
-  lines: z.array(budgetLineSchema),
+  pajakRate: zRate.nullish(),
+  retensiRate: zRate.nullish(),
+  lines: z.array(budgetLineSchema).optional(),
 });
+export type TemplateInput = z.infer<typeof templateSchema>;
 
 export const frLineInputSchema = z.object({
   budgetCode: z.enum(FR_CODES),
@@ -102,7 +109,10 @@ export const frLineInputSchema = z.object({
 
 export const frCreateSchema = z.object({
   clusterId: z.string().min(1),
-  tanggal: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD'),
+  tanggal: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD')
+    .optional(),
   periode: z.string().trim().max(100).nullish(),
   diajukanKepada: z.string().trim().max(120).default('Investor'),
   justifikasi: z.string().trim().max(2000).nullish(),

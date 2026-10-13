@@ -1,0 +1,366 @@
+// Indotek Project Budget System — Fase 1
+// Uang: Decimal(18,2). Rasio/persen: Decimal(12,8) (0.025 = 2,5%).
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  PM
+  FINANCE
+  DIREKTUR
+  INVESTOR
+}
+
+enum ClusterStatus {
+  PLAN
+  ONGOING
+  DONE
+  CANCELLED
+}
+
+enum Division {
+  IBK
+  TELCO
+}
+
+enum LineMode {
+  PCT
+  RP
+}
+
+/// Kode baris budget (BudgetLine & template).
+enum BudgetCode {
+  SUBCON
+  TICKET
+  INDIRECT
+  DIRECT
+  OPS_KANTOR
+  MOTOR_MOBIL
+  HOMEBASE
+  ALLOWANCE
+  MARKETING
+}
+
+/// Pos form pengajuan dana (Bagian A + B).
+enum FrCode {
+  SUBCON
+  PERMIT
+  TICKET
+  PAJAK
+  INDIRECT
+  DIRECT
+  OPS_KANTOR
+  MOTOR_MOBIL
+  HOMEBASE
+  ALLOWANCE
+  MARKETING
+}
+
+enum FrStatus {
+  DRAFT
+  DIAJUKAN
+  DIPERIKSA_FINANCE
+  DISETUJUI_DIREKTUR
+  DIKETAHUI_INVESTOR
+  DICAIRKAN
+  DITOLAK
+}
+
+enum ApprovalStep {
+  DIAJUKAN
+  PERIKSA_FINANCE
+  SETUJU_DIREKTUR
+  MENGETAHUI_INVESTOR
+  PENCAIRAN
+}
+
+enum ApprovalAction {
+  APPROVE
+  REJECT
+}
+
+enum AttachmentKind {
+  PROYEKSI_BUDGET
+  PO_SPK
+  RENCANA_KERJA
+  BOQ_PENAWARAN
+  LAPORAN_TERMIN_SEBELUMNYA
+  LAINNYA
+  BUKTI_CAIR
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  jabatan      String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships   ProjectMember[]
+  refreshTokens RefreshToken[]
+  fundRequests  FundRequest[]   @relation("DiajukanOleh")
+  overrides     FundRequest[]   @relation("OverrideOleh")
+  approvals     Approval[]
+  auditLogs     AuditLog[]
+  attachments   Attachment[]
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Client {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  projects  Project[]
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  clientId  String
+  year      Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  client       Client          @relation(fields: [clientId], references: [id])
+  clusters     Cluster[]
+  setting      Setting?
+  template     BudgetTemplate?
+  members      ProjectMember[]
+  fpdSequences FpdSequence[]
+}
+
+/// Akses project per user. Dipakai untuk membatasi role INVESTOR.
+model ProjectMember {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+}
+
+/// projectId null = setting global (satu baris). Kolom null pada setting project = ikut global.
+model Setting {
+  id            String   @id @default(cuid())
+  projectId     String?  @unique
+  interestRate  Decimal? @db.Decimal(12, 8)
+  retensiAsCost Boolean?
+  rekeningBank  String?
+  rekeningNo    String?
+  rekeningNama  String?
+  updatedAt     DateTime @updatedAt
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+/// Template default saat membuat cluster baru. projectId null = global; template project meng-override per pos.
+model BudgetTemplate {
+  id          String               @id @default(cuid())
+  projectId   String?              @unique
+  pajakRate   Decimal?             @db.Decimal(12, 8)
+  retensiRate Decimal?             @db.Decimal(12, 8)
+  updatedAt   DateTime             @updatedAt
+  project     Project?             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lines       BudgetTemplateLine[]
+}
+
+model BudgetTemplateLine {
+  id         String         @id @default(cuid())
+  templateId String
+  code       BudgetCode
+  mode       LineMode       @default(PCT)
+  pct        Decimal?       @db.Decimal(12, 8)
+  amount     Decimal?       @db.Decimal(18, 2)
+  template   BudgetTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, code])
+}
+
+model Cluster {
+  id            String        @id @default(cuid())
+  projectId     String
+  name          String
+  info          String?
+  division      Division?
+  status        ClusterStatus @default(PLAN)
+  nilaiPoImpl   Decimal       @db.Decimal(18, 2)
+  nilaiPoPermit Decimal       @default(0) @db.Decimal(18, 2)
+  permitCost    Decimal       @default(0) @db.Decimal(18, 2)
+  pajakRate     Decimal       @db.Decimal(12, 8)
+  retensiRate   Decimal       @default(0.10) @db.Decimal(12, 8)
+  sortOrder     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id])
+  budgetLines  BudgetLine[]
+  fundRequests FundRequest[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model BudgetLine {
+  id        String     @id @default(cuid())
+  clusterId String
+  code      BudgetCode
+  label     String
+  mode      LineMode
+  pct       Decimal?   @db.Decimal(12, 8)
+  amount    Decimal?   @db.Decimal(18, 2)
+  sortOrder Int
+  cluster   Cluster    @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+
+  @@unique([clusterId, code])
+}
+
+/// Nomor urut FPD per project per bulan (dikunci & dinaikkan di dalam transaksi submit).
+model FpdSequence {
+  projectId String
+  year      Int
+  month     Int
+  lastSeq   Int     @default(0)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, year, month])
+}
+
+model FundRequest {
+  id             String   @id @default(cuid())
+  /// Nomor FPD; null selama belum pernah disubmit (tampil sebagai DRAFT-xxxxxx).
+  number         String?  @unique
+  clusterId      String
+  terminKe       Int
+  tanggal        DateTime @db.Date
+  periode        String?
+  diajukanOlehId String
+  diajukanKepada String   @default("Investor")
+  justifikasi    String
+  rekeningBank   String?
+  rekeningNo     String?
+  rekeningNama   String?
+  status         FrStatus @default(DRAFT)
+
+  // Snapshot (dibekukan saat SUBMIT; selama DRAFT ikut budget/setting terkini)
+  nilaiProyek   Decimal @db.Decimal(18, 2)
+  interestRate  Decimal @db.Decimal(12, 8)
+  retensiAsCost Boolean
+  infoBunga     Decimal @db.Decimal(18, 2)
+  infoRetensi   Decimal @db.Decimal(18, 2)
+  infoProfit    Decimal @db.Decimal(18, 2)
+  infoMargin    Decimal @db.Decimal(12, 8)
+  totalDiajukan Decimal @db.Decimal(18, 2)
+
+  submittedAt           DateTime?
+  cairTanggal           DateTime? @db.Date
+  cairBuktiAttachmentId String?   @unique
+  overrideReason        String?
+  overrideById          String?
+  rejectedNote          String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  cluster      Cluster           @relation(fields: [clusterId], references: [id])
+  diajukanOleh User              @relation("DiajukanOleh", fields: [diajukanOlehId], references: [id])
+  overrideBy   User?             @relation("OverrideOleh", fields: [overrideById], references: [id])
+  lines        FundRequestLine[]
+  approvals    Approval[]
+  attachments  Attachment[]      @relation("FrAttachments")
+  cairBukti    Attachment?       @relation("CairBukti", fields: [cairBuktiAttachmentId], references: [id])
+
+  @@index([clusterId, status])
+  @@index([status])
+}
+
+model FundRequestLine {
+  id                    String      @id @default(cuid())
+  fundRequestId         String
+  budgetCode            FrCode
+  label                 String
+  budgetAmount          Decimal     @db.Decimal(18, 2)
+  pctNilaiProyek        Decimal     @db.Decimal(12, 8)
+  pctCair               Decimal     @default(1) @db.Decimal(12, 8)
+  diajukan              Decimal     @db.Decimal(18, 2)
+  sudahDicairkanSebelum Decimal     @default(0) @db.Decimal(18, 2)
+  sedangDiproses        Decimal     @default(0) @db.Decimal(18, 2)
+  sisaBudget            Decimal     @db.Decimal(18, 2)
+  keterangan            String?
+  sortOrder             Int
+  fundRequest           FundRequest @relation(fields: [fundRequestId], references: [id], onDelete: Cascade)
+
+  @@unique([fundRequestId, budgetCode])
+}
+
+model Approval {
+  id            String         @id @default(cuid())
+  fundRequestId String
+  step          ApprovalStep
+  userId        String
+  action        ApprovalAction
+  note          String?
+  at            DateTime       @default(now())
+  fundRequest   FundRequest    @relation(fields: [fundRequestId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id])
+
+  @@index([fundRequestId])
+}
+
+/// Lampiran form. fileUrl boleh kosong: lampiran bisa hanya dicentang (diserahkan fisik) seperti form Excel.
+model Attachment {
+  id             String         @id @default(cuid())
+  fundRequestId  String
+  kind           AttachmentKind
+  label          String?
+  fileUrl        String?
+  fileName       String?
+  mimeType       String?
+  size           Int?
+  checked        Boolean        @default(false)
+  uploadedById   String?
+  createdAt      DateTime       @default(now())
+  fundRequest    FundRequest    @relation("FrAttachments", fields: [fundRequestId], references: [id], onDelete: Cascade)
+  uploadedBy     User?          @relation(fields: [uploadedById], references: [id])
+  cairBuktiOf    FundRequest?   @relation("CairBukti")
+
+  @@index([fundRequestId])
+}
+
+model AuditLog {
+  id       String   @id @default(cuid())
+  entity   String
+  entityId String
+  field    String
+  oldValue String?
+  newValue String?
+  userId   String?
+  at       DateTime @default(now())
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([at])
+}

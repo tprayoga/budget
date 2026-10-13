@@ -1,0 +1,17 @@
+import { createParamDecorator, ExecutionContext, SetMetadata } from '@nestjs/common';
+import type { Role } from '@indotek/shared';
+import type { AuthUser } from './auth.types';
+
+export const IS_PUBLIC = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC, true);
+
+export const ROLES_KEY = 'roles';
+/** Batasi endpoint ke role tertentu. Tanpa @Roles = semua user login. */
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+
+/** Role yang boleh mengubah data master/budget. */
+export const EDITOR_ROLES: Role[] = ['ADMIN', 'PM'];
+
+export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext): AuthUser => {
+  return ctx.switchToHttp().getRequest().user;
+});
