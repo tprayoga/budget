@@ -5,7 +5,7 @@ import { calcCluster, calcProjectTotal } from '../src/calc/budget';
 import { D } from '../src/calc/decimal';
 import { parseBudgetWorkbook, type ParsedWorkbook } from '../src/xlsx/budgetSheet';
 
-const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.xlsx');
+const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
 let parsed: ParsedWorkbook;
 beforeAll(async () => {

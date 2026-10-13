@@ -11,3 +11,5 @@ e2e/test-results
 e2e/report
 *.log
 .DS_Store
+# Data asli (berisi nama & rekening) — tidak boleh masuk repo
+private/

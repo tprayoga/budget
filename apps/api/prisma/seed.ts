@@ -44,7 +44,7 @@ const USERS: { email: string; name: string; role: Role; jabatan: string; project
   { email: 'investor@indotek.test', name: 'Hendra Wijaya', role: 'INVESTOR', jabatan: 'Investor', projects: ['ADW'] },
 ];
 
-const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.xlsx');
+const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
 async function main() {
   const password = process.env.SEED_PASSWORD || 'Indotek123!';

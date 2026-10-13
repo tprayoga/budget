@@ -3,7 +3,7 @@ import type { BudgetLineCode, Division, LineMode } from '../enums';
 import { D } from '../calc/decimal';
 
 /**
- * Layout sheet project (contoh: docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.xlsx):
+ * Layout sheet project (contoh: docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx):
  * kolom A = label; mulai kolom D tiap cluster 2 kolom (%, Rp).
  * Baris 1 nama cluster (kolom %), 2 info, 3 header "%"/"Rp", 4 Nilai PO Implementasi (Rp),
  * 5 Nilai PO Permit (Rp), 8 Subcon, 9 Permit, 10 Ticket, 12 Pajak (%), 13 Retensi (%), 15–21 cost project.

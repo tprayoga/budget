@@ -6,7 +6,7 @@ import { dec } from '@indotek/shared';
 import { parseBudgetWorkbook } from '@indotek/shared/xlsx';
 import { binaryParser, clusterId, createApp } from './helpers';
 
-const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.xlsx');
+const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
 let ctx: Awaited<ReturnType<typeof createApp>>;
 beforeAll(async () => {

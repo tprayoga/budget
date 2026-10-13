@@ -34,7 +34,7 @@ Saat container API start, ia menjalankan `prisma migrate deploy` lalu seed. Seed
 - user demo,
 - setting & template default,
 - 3 project,
-- cluster dari `docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.xlsx`.
+- cluster dari `docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx`.
 
 Seed bersifat idempotent dan tidak menimpa data yang sudah ada.
 
