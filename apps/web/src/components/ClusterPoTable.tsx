@@ -59,7 +59,7 @@ export function ClusterPoTable({ clusterId, pos, editable }: { clusterId: string
   const of = (kinds: PoKind[]) => sum(pos.filter((p) => kinds.includes(p.kind)).map((p) => p.amount)).toString();
   const totals = [
     { label: 'Nilai PO Implementasi', hint: 'Implementasi + Addwork + Deduction', value: of(['IMPLEMENTASI', 'ADDWORK', 'DEDUCTION']) },
-    { label: 'Nilai PO Permit', hint: 'Permit + SND', value: of(['PERMIT', 'SND']) },
+    { label: 'Nilai PO Permit', hint: 'Permit + SND; margin permit hanya Permit', value: of(['PERMIT', 'SND']) },
     { label: 'Biaya permit (pass-through)', hint: 'Σ biaya pass-through', value: sum(pos.map((p) => p.passThroughCost)).toString() },
   ];
 
@@ -156,9 +156,10 @@ export function ClusterPoTable({ clusterId, pos, editable }: { clusterId: string
               </Field>
             </div>
             <Field label="Catatan"><input className="input" value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></Field>
-            {!draft.id && draft.kind !== 'IMPLEMENTASI' && draft.kind !== 'PERMIT' && (
-              <p className="text-xs text-slate-500">Termin klien 1 × 100% dibuat otomatis untuk PO ini (tanggal invoice diisi FINANCE).</p>
+            {(draft.kind === 'ADDWORK' || draft.kind === 'DEDUCTION') && (
+              <p className="text-xs text-slate-500">Addwork/deduction tidak punya termin sendiri — mengoreksi termin 1 PO implementasi lewat "Hitung ulang termin" (FINANCE) di tab Termin Klien.</p>
             )}
+            {!draft.id && draft.kind === 'SND' && <p className="text-xs text-slate-500">Termin klien 1 × 100% dibuat otomatis untuk PO SND (tanggal invoice diisi FINANCE).</p>}
           </div>
         )}
       </Modal>

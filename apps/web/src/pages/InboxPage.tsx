@@ -25,7 +25,7 @@ export function InboxPage() {
       {can('FINANCE') && (
         <section className="card mt-4 overflow-x-auto" aria-label="Termin tanpa tanggal invoice">
           <div className="border-b px-4 py-3">
-            <h2 className="font-semibold">Termin klien: tanggal invoice belum diisi <span className="ml-1 rounded-full bg-amber-100 px-2 text-xs text-amber-800" data-testid="missing-invoice-count">{missing.data?.length ?? 0}</span></h2>
+            <h2 className="font-semibold">Termin klien: tanggal invoice / diterima belum diisi <span className="ml-1 rounded-full bg-amber-100 px-2 text-xs text-amber-800" data-testid="missing-invoice-count">{missing.data?.length ?? 0}</span></h2>
             <p className="text-xs text-slate-500">Tanggal invoice tidak diisi otomatis. Lengkapi dari dokumen invoice di tab Termin Klien cluster.</p>
           </div>
           {missing.isLoading ? <Spinner /> : missing.error ? <ErrorBox error={missing.error} /> : missing.data?.length ? (
@@ -36,7 +36,7 @@ export function InboxPage() {
                   <tr key={m.id} className="border-t">
                     <td className="td"><Link className="text-brand hover:underline" to={`/clusters/${m.clusterId}?tab=termin`}>{m.clusterName}</Link><div className="text-[11px] text-slate-500">{m.projectCode}</div></td>
                     <td className="td">{PO_KIND_LABEL[m.kind]}{m.poNumber ? ` · ${m.poNumber}` : ''} — termin {m.termin}</td>
-                    <td className="td">{m.invoiceNo ?? '—'}<div><MissingDateBadge /></div></td>
+                    <td className="td">{m.invoiceNo ?? '—'}<div><MissingDateBadge what={m.missing === 'PAID' ? 'paid' : 'invoice'} /></div></td>
                     <td className="td num"><Money value={m.amount} plain /></td>
                     <td className="td">{CLIENT_PAYMENT_STATUS_LABEL[m.status]}</td>
                   </tr>

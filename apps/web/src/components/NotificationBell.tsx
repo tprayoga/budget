@@ -50,7 +50,7 @@ export function NotificationBell({ tone = 'dark' }: { tone?: 'dark' | 'light' })
                   }}
                 >
                   <div className="text-sm font-medium">{n.title}</div>
-                  <div className="text-xs text-slate-600">{n.body}</div>
+                  <div className="whitespace-pre-line text-xs text-slate-600">{n.body}</div>
                   <div className="mt-0.5 text-[11px] text-slate-400">{formatTanggalJam(n.createdAt)}</div>
                 </button>
               </li>

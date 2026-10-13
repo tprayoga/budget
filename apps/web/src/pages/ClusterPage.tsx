@@ -29,6 +29,7 @@ const pct = z.string().refine((v) => pctInputToRatio(v) !== null, 'Persen tidak 
 const formSchema = z.object({
   name: z.string().trim().min(2, 'Minimal 2 karakter'),
   info: z.string().optional(),
+  note: z.string().optional(),
   division: z.enum(['', 'IBK', 'TELCO']),
   status: z.enum(CLUSTER_STATUSES),
   nilaiPoImpl: rp,
@@ -45,6 +46,7 @@ function toForm(c: Cluster): FormValues {
   return {
     name: c.name,
     info: c.info ?? '',
+    note: c.note ?? '',
     division: (c.division ?? '') as FormValues['division'],
     status: c.status,
     nilaiPoImpl: formatAngka(c.nilaiPoImpl, 2).replace(/,00$/, ''),
@@ -153,7 +155,7 @@ export function ClusterPage() {
       const c = fromForm(q.data!, v);
       return api(`/clusters/${id}`, {
         method: 'PATCH',
-        json: { ...toUpdatePayload(c), name: c.name, info: c.info, division: c.division, status: c.status, implementationDate: v.implementationDate || null },
+        json: { ...toUpdatePayload(c), name: c.name, info: c.info, note: v.note || null, division: c.division, status: c.status, implementationDate: v.implementationDate || null },
       });
     },
     onSuccess: invalidate,
@@ -200,6 +202,7 @@ export function ClusterPage() {
           <>
             <Link to={`/projects/${c.project.id}`} className="text-brand hover:underline">{c.project.code}</Link> · {c.project.client.name}
             {c.info && <> · {c.info}</>}
+            {c.note && <span className="mt-1 block rounded bg-sky-50 px-2 py-1 text-xs text-sky-800" data-testid="cluster-note">Catatan: {c.note}</span>}
           </>
         }
         actions={
@@ -251,6 +254,9 @@ export function ClusterPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Nama cluster" error={form.formState.errors.name?.message}><input className="input" {...form.register('name')} /></Field>
               <Field label="Info (SPK / PO / divisi)"><input className="input" {...form.register('info')} /></Field>
+              <div className="sm:col-span-2">
+                <Field label="Catatan cluster"><textarea className="input min-h-[2.5rem]" rows={2} {...form.register('note')} aria-label="Catatan cluster" /></Field>
+              </div>
               <Field label="Status">
                 <select className="input" {...form.register('status')}>
                   {CLUSTER_STATUSES.map((s) => <option key={s} value={s}>{CLUSTER_STATUS_LABEL[s]}</option>)}

@@ -163,7 +163,8 @@ export function RekapPage() {
               <th className="th num">Margin</th>
               <th className="th num hidden lg:table-cell" title="Nilai PO permit − biaya permit − pajak atas permit − interest atas biaya permit">Margin permit</th>
               <th className="th num hidden xl:table-cell" title="Realisasi biaya terverifikasi">Realisasi</th>
-              <th className="th num hidden xl:table-cell" title="Pembayaran klien (bruto) − realisasi biaya">Profit realisasi</th>
+              <th className="th num hidden xl:table-cell" title="DPP termin dibayar − realisasi biaya">Profit realisasi</th>
+              <th className="th num hidden xl:table-cell" title="PPN keluaran atas termin dibayar — titipan, bukan pendapatan/biaya">PPN titipan</th>
             </tr>
           </thead>
           <tbody>
@@ -189,6 +190,7 @@ export function RekapPage() {
                   <td className="td num hidden lg:table-cell"><Money value={p.total.marginPermit} plain /></td>
                   <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'realisasiBiaya')} plain /></td>
                   <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'profitRealisasi')} plain /></td>
+                  <td className="td num hidden xl:table-cell"><Money value={sumField(p.clusters, 'ppnTitipan')} plain /></td>
                 </tr>
                 {p.rows.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -208,10 +210,11 @@ export function RekapPage() {
                     <td className="td num hidden lg:table-cell">{Number(c.calc.nilaiPoPermit) || Number(c.calc.permit.amount) ? <Money value={c.calc.marginPermit} plain /> : <span className="text-slate-300">—</span>}</td>
                     <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.realisasiBiaya ?? null} plain /></td>
                     <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.profitRealisasi ?? null} plain /></td>
+                    <td className="td num hidden xl:table-cell"><Money value={c.realisasi?.ppnTitipan ?? null} plain /></td>
                   </tr>
                 ))}
                 {isFiltered && !p.rows.length && (
-                  <tr><td colSpan={11} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
+                  <tr><td colSpan={12} className="td text-center text-xs text-slate-400">Tidak ada cluster yang cocok dengan filter</td></tr>
                 )}
               </Fragment>
             ))}

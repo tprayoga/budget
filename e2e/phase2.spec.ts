@@ -72,7 +72,8 @@ test('Termin klien: bayar kurang dari bruto → potongan jadi realisasi PAJAK', 
   await expect(page.getByText('Tidak ada perubahan — termin sudah sesuai nilai PO.')).toBeVisible();
   await page.getByRole('dialog').getByRole('button', { name: 'Batal' }).click();
   await page.getByRole('tab', { name: 'Realisasi' }).click();
-  await expect(page.locator('tr[data-level]', { hasText: /^Pajak/ })).toContainText('326.278'); // bruto 8.326.277,60 − diterima 8.000.000 (dibulatkan)
+  // DPP 8.326.277,60 + PPN 11% 915.890,54 − diterima 8.000.000 = 1.242.168,14
+  await expect(page.locator('tr[data-level]', { hasText: /^Pajak/ })).toContainText('1.242.168');
 });
 
 test.describe('HP: input cepat PM → verifikasi Finance', () => {
@@ -131,9 +132,10 @@ test('PO cluster: tambah Addwork → nilai PO implementasi & termin 100% (badge 
   await expect(po.getByRole('row', { name: /Nilai PO Implementasi/ })).toContainText('14.449.300');
   await expect(page.getByLabel('Nilai PO Implementasi (Rp)')).toHaveValue('14.449.300');
   await page.screenshot({ path: path.join(SHOTS, 'cluster-po.png'), fullPage: true });
+  // Fase 2.4: addwork tidak punya termin sendiri — mengoreksi termin 1 implementasi lewat hitung ulang (FINANCE)
   await page.getByRole('tab', { name: 'Termin Klien' }).click();
-  await expect(page.getByTestId('po-group-ADDWORK')).toContainText('500.000');
-  await expect(page.getByTestId('po-group-ADDWORK').getByTestId('badge-tanggal-invoice')).toBeVisible();
+  await expect(page.getByTestId('po-group-ADDWORK')).toContainText('Mengoreksi termin 1 PO implementasi');
+  await expect(page.getByTestId('po-group-ADDWORK').getByTestId('badge-tanggal-invoice')).toHaveCount(0);
   // bersihkan
   await page.getByRole('tab', { name: 'Budget' }).click();
   page.once('dialog', (d) => void d.accept());
@@ -154,20 +156,30 @@ test('Termin klien: badge tanggal invoice (permit Semarang), inbox FINANCE, tera
   await expect(page.getByTestId('po-group-PERMIT')).toContainText('36.000.000');
 
   await openCluster(page, 'Cluster Sinagar Tasik', 'termin');
+  // Acuan Q: DPP 18.500.000 + PPN 2.035.000 − PPh 2,65% 490.250 = net 20.044.750 → referensi cocok otomatis
+  const permit1 = page.getByTestId('po-group-PERMIT').getByRole('row', { name: /Termin 1/ });
+  await expect(permit1).toContainText('2.035.000');
+  await expect(permit1).toContainText('20.044.750');
   const refs = page.getByRole('region', { name: 'Referensi tagihan RAB' });
   const ref = refs.getByRole('row', { name: /I2628-00139/ });
   await expect(ref).toContainText('20.044.750');
-  await ref.getByRole('button', { name: 'Terapkan ke termin…' }).click();
-  const dialog = page.getByRole('dialog');
-  const target = dialog.getByLabel('Termin tujuan');
-  await target.selectOption((await target.locator('option', { hasText: /PO Permit.*termin 1 / }).getAttribute('value'))!);
-  await dialog.getByLabel('Nilai bruto').fill('20.500.000');
-  await dialog.getByLabel('Tanggal diterima').fill('2026-09-30'); // referensi tidak punya jatuh tempo → wajib diisi
-  await expect(dialog).toContainText('455.250'); // potongan → PAJAK
+  await expect(ref.getByTestId('ref-suggestion')).toContainText('cocok → PO Permit');
+  await expect(refs.getByRole('button', { name: /Terapkan semua yang cocok/ })).toBeVisible();
   await page.screenshot({ path: path.join(SHOTS, 'terapkan-referensi.png') });
-  await dialog.getByRole('button', { name: 'Terapkan' }).click();
+  await ref.getByRole('button', { name: 'Konfirmasi' }).click();
   await expect(ref).toContainText('Diterapkan');
-  await expect(page.getByTestId('po-group-PERMIT').getByRole('row', { name: /Termin 1/ })).toContainText('Dibayar');
+  await expect(permit1).toContainText('Dibayar');
+  await expect(permit1.getByTestId('badge-tanggal-diterima')).toBeVisible(); // RAB tidak memuat tanggal diterima
+  await expect(page.getByTestId('termin-totals')).toContainText('2.035.000');
+  await page.getByRole('tab', { name: 'Realisasi' }).click();
+  await expect(page.locator('tr[data-level]', { hasText: /^Pajak/ })).toContainText('490.250');
+});
+
+test('Catatan cluster TEPAS RW 05 NGAWI-REV (konfirmasi PO)', async ({ page }) => {
+  await login(page, 'pm');
+  await page.goto('/rekap');
+  await page.getByRole('link', { name: 'Distribusi - TEPAS RW 05 NGAWI -REV', exact: true }).first().click();
+  await expect(page.getByTestId('cluster-note')).toContainText('PO 33.655.100 dikonfirmasi user 14 Okt 2026');
 });
 
 test('Notifikasi: lonceng tersedia untuk PM', async ({ page }) => {

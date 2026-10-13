@@ -25,6 +25,7 @@ export function calcClusterLocal(c: Cluster, a: Assumption): ClusterCalcResult {
   return calcCluster({
     nilaiPoImpl: c.nilaiPoImpl,
     nilaiPoPermit: c.nilaiPoPermit,
+    permitPoAmount: c.permitPoAmount ?? c.nilaiPoPermit,
     permitCost: c.permitCost,
     pajakRate: c.pajakRate,
     retensiRate: c.retensiRate,

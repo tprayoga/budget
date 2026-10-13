@@ -55,6 +55,7 @@ export interface EffectiveSetting {
   rekeningNama: string | null;
   realisasiWarnPct?: string;
   realisasiOverPct?: string;
+  ppnRate?: string;
   overridden: string[];
 }
 
@@ -77,6 +78,9 @@ export interface Cluster {
   nilaiPoImpl: string;
   nilaiPoPermit: string;
   permitCost: string;
+  /** Σ PO PERMIT saja (dasar margin permit, tanpa SND) */
+  permitPoAmount?: string;
+  note?: string | null;
   pajakRate: string;
   retensiRate: string;
   implementationDate?: string | null;
@@ -346,10 +350,19 @@ export interface ClientPayment {
   fromTemplate: boolean;
   /** Termin sudah ditagih / punya no. invoice / manual, tetapi tanggal invoice kosong. */
   needsInvoiceDate: boolean;
+  /** Dibayar (referensi RAB) tetapi tanggal diterima kosong. */
+  needsPaidDate: boolean;
   kind: TerminKind;
   termin: number;
   pct: string | null;
+  /** DPP */
   amount: string;
+  ppnRate: string;
+  pphRate: string;
+  ppnAmount: string;
+  pphAmount: string;
+  invoiceTotal: string;
+  expectedNet: string;
   keterangan: string | null;
   invoiceNo: string | null;
   invoiceDate: string | null;
@@ -373,6 +386,8 @@ export interface ClientInvoiceRef {
   paid: boolean;
   appliedPaymentId: string | null;
   appliedAt: string | null;
+  suggestion: { paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
+  ambiguous: boolean;
 }
 
 export interface ClientPaymentsResponse {
@@ -381,6 +396,7 @@ export interface ClientPaymentsResponse {
   templates: { kind: TerminKind; agingDays: number | null; agingType: AgingType | null; lines: number }[];
   invoiceRefs: ClientInvoiceRef[];
   missingInvoiceDate: number;
+  totals: { dpp: string; ppn: string; ppnTitipan: string };
 }
 
 export interface AppNotification {
@@ -405,6 +421,7 @@ export interface MissingInvoiceDate {
   invoiceNo: string | null;
   amount: string;
   status: ClientPaymentStatus;
+  missing: 'INVOICE' | 'PAID';
 }
 
 export interface FrUsage {
@@ -429,5 +446,6 @@ export interface RealisasiSummary {
   menungguVerifikasi: string;
   pembayaranBruto: string;
   kasDiterima: string;
+  ppnTitipan?: string;
   profitRealisasi: string;
 }
