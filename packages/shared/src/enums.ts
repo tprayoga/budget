@@ -144,3 +144,67 @@ export type ApprovalStep = (typeof APPROVAL_STEPS)[number];
 
 export const APPROVAL_ACTIONS = ['APPROVE', 'REJECT'] as const;
 export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+// ---------------------------------------------------------------- Fase 2: realisasi
+
+export const EXPENSE_CATEGORIES = [
+  'SUBCON_JASA',
+  'SUBCON_MATERIAL',
+  'PERMIT',
+  'OPS',
+  'PJD',
+  'TICKET',
+  'HOMEBASE',
+  'MOTOR_MOBIL',
+  'MATERIAL_PEMBELIAN',
+  'PAJAK',
+  'LAINNYA',
+] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export const EXPENSE_CATEGORY_LABEL: Record<ExpenseCategory, string> = {
+  SUBCON_JASA: 'Subcon jasa',
+  SUBCON_MATERIAL: 'Subcon material',
+  PERMIT: 'Permit',
+  OPS: 'OPS teknisi',
+  PJD: 'Perjalanan dinas (PJD)',
+  TICKET: 'Tiket',
+  HOMEBASE: 'Homebase',
+  MOTOR_MOBIL: 'Motor & mobil',
+  MATERIAL_PEMBELIAN: 'Pembelian material',
+  PAJAK: 'Pajak',
+  LAINNYA: 'Lainnya',
+};
+
+export const EXPENSE_STATUSES = ['PERLU_VERIFIKASI', 'TERVERIFIKASI', 'DITOLAK'] as const;
+export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+export const EXPENSE_STATUS_LABEL: Record<ExpenseStatus, string> = {
+  PERLU_VERIFIKASI: 'Perlu verifikasi',
+  TERVERIFIKASI: 'Terverifikasi',
+  DITOLAK: 'Ditolak',
+};
+
+export const EXPENSE_SOURCES = ['MANUAL', 'MOBILE', 'WEBHOOK', 'IMPORT_RAB', 'CLIENT_PAYMENT'] as const;
+export type ExpenseSource = (typeof EXPENSE_SOURCES)[number];
+
+export const ALLOCATION_METHODS = ['EQUAL', 'PRO_RATA_PO', 'MANUAL'] as const;
+export type AllocationMethod = (typeof ALLOCATION_METHODS)[number];
+export const ALLOCATION_METHOD_LABEL: Record<AllocationMethod, string> = {
+  EQUAL: 'Rata',
+  PRO_RATA_PO: 'Pro-rata nilai PO implementasi',
+  MANUAL: 'Manual',
+};
+
+export const TERMIN_KINDS = ['IMPLEMENTASI', 'PERMIT'] as const;
+export type TerminKind = (typeof TERMIN_KINDS)[number];
+
+export const AGING_TYPES = ['CALENDAR', 'WORKING'] as const;
+export type AgingType = (typeof AGING_TYPES)[number];
+
+export const CLIENT_PAYMENT_STATUSES = ['UNBILLED', 'INVOICED', 'PAID'] as const;
+export type ClientPaymentStatus = (typeof CLIENT_PAYMENT_STATUSES)[number];
+export const CLIENT_PAYMENT_STATUS_LABEL: Record<ClientPaymentStatus, string> = {
+  UNBILLED: 'Belum ditagih',
+  INVOICED: 'Ditagih',
+  PAID: 'Dibayar',
+};

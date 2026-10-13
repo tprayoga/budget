@@ -96,3 +96,78 @@ nilaiProyek 145.940.677; pajak 2,65% × 145.940.677 = **3.867.427,94** (presisi 
 4. #2 adalah termin pelunasan (Σ pctCair = 100%), jadi diajukan = sisa yang tersedia. Penyesuaian
    pembulatan maks. ±1 rupiah per pos: Pajak 118.010; Indirect 47.205; Direct 70.807; Ops/Allowance/Marketing 47.205.
    TOTAL diajukan #2 = **3.854.087**, sisaBudget setiap pos = **0**, dan #1 + #2 = 7.708.170 (sama dengan pengajuan 100%).
+
+---
+
+# Acceptance Test — Fase 2 (Realisasi biaya vs budget)
+
+| Bagian | File test |
+|---|---|
+| Kalkulasi (alokasi, realisasi, termin, potongan pembayaran) | `packages/shared/src/calc/realization.test.ts` |
+| Parser RAB & buku kas | `packages/shared/test/acceptance-rab.test.ts` (membaca `docs/samples/RAB_Project_TELCO_-_IBK_1.sample.xlsx`) |
+| Lewat API/DB (import, alokasi, webhook, pembayaran klien) | `apps/api/test/realization.e2e-spec.ts` |
+
+Mapping kategori → pos budget (default, bisa diubah di DB):
+
+| Kategori | Pos |
+|---|---|
+| SUBCON_JASA, SUBCON_MATERIAL, MATERIAL_PEMBELIAN | SUBCON |
+| PERMIT | PERMIT |
+| OPS | OPS_KANTOR |
+| PJD | ALLOWANCE |
+| TICKET / HOMEBASE / MOTOR_MOBIL | pos bernama sama |
+| PAJAK | PAJAK |
+| LAINNYA | dipilih manual |
+
+## G. Evantama — "Cluster Sinagar Tasik" (sheet EVANTAMA)
+
+Total Jasa (D44) **19.284.060**, Total Material (D45) **26.353.000**, Biaya Permit (D33) **37.000.000**.
+Setelah import: realisasi pos SUBCON = 45.637.060, pos PERMIT = 37.000.000.
+
+## H. CCSI Manado (sheet CCSI)
+
+Total Jasa (D42) **36.920.416**. Blok "CCSI - Site Manado" mencakup 2 cluster, jadi item ini masuk daftar
+"perlu dipetakan manual" (tidak ditebak).
+
+## I. ADW — "Gempol Cirebon" (kategori ditentukan label item)
+
+| Ukuran | Nilai |
+|---|---|
+| Total Jasa di sheet (D42, formula `D34+D35+D36`) | 17.682.752 |
+| SUBCON_JASA (Term 1 Jasa 8.343.200 + Cut Pekerjaan 4.996.000) | **13.339.200** |
+| SUBCON_MATERIAL (Term 1 Material 4.343.552 + SPK 02 Material 610.736) | **4.954.288** |
+| Realisasi pos SUBCON (= sheet ADW E12) | **18.293.488** |
+
+D35 "Term 1 Material 80%" diberi peringatan "label ≠ formula total".
+
+## J. Biaya OPS Evantama — alokasi project-level
+
+Total 12 item (D49:D60) = **10.735.600**.
+
+| Metode | Sinagar | RW 08 | RW 04 |
+|---|---|---|---|
+| EQUAL (default import RAB) | 3.578.533,33 | 3.578.533,33 | **3.578.533,34** |
+| PRO_RATA_PO (bobot nilaiPoImpl 108.940.677 / 34.882.758 / 41.631.388) | 6.306.352,74 | 2.019.291,44 | **2.409.955,82** |
+
+Sisa pembulatan selalu masuk ke cluster terakhir. Alokasi 12 item dihitung secara kumulatif, sehingga total per
+cluster tetap sama seperti mengalokasikan 10.735.600 sekaligus.
+
+## K. Pembayaran klien → expense PAJAK otomatis
+
+Termin bruto 10.000.000, diterima 9.735.000 (PAID) → expense PAJAK **265.000** (TERVERIFIKASI, source
+CLIENT_PAYMENT, tidak bisa diedit manual). paidAmount diubah ke 9.750.000 → expense PAJAK menjadi **250.000**.
+Profit realisasi = Σ bruto termin PAID − Σ realisasi terverifikasi (termasuk PAJAK). Kas diterima = Σ paidAmount.
+
+## L. Webhook
+
+Expense dari webhook berstatus PERLU_VERIFIKASI. Angka realisasi cluster **tidak berubah** sampai FINANCE
+memverifikasinya; setelah diverifikasi, realisasi bertambah sebesar nominal expense.
+
+## M. Termin klien & jatuh tempo
+
+- ADW 80/10/10 (tanpa aging): 44.741.500 → 35.793.200 / 4.474.150 / 4.474.150.
+- Evantama implementasi 20/30/40/10 atas nilaiPoImpl, dengan sisa pembulatan ke termin terakhir:
+  108.940.677 → 21.788.135,40 / 32.682.203,10 / 43.576.270,80 / 10.894.067,70.
+- Evantama permit 50/50: 37.000.000 → 18.500.000 / 18.500.000.
+- Jatuh tempo 30 hari kalender: 16 Sep 2026 → 16 Okt 2026.
+- Jatuh tempo 14 hari kerja: 14 Sep 2026 → 2 Okt 2026. Bila 1 Okt hari libur → 5 Okt 2026.
