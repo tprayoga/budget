@@ -187,6 +187,8 @@ model Setting {
   realisasiWarnPct Decimal? @db.Decimal(16, 12)
   /// Ambang notifikasi over budget (rasio, 1 = 100%)
   realisasiOverPct Decimal? @db.Decimal(16, 12)
+  /// Tarif PPN keluaran untuk termin klien (default 0,11)
+  ppnRate          Decimal? @db.Decimal(16, 12)
   updatedAt     DateTime @updatedAt
   project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
@@ -224,6 +226,10 @@ model Cluster {
   nilaiPoImpl   Decimal       @db.Decimal(18, 2)
   nilaiPoPermit Decimal       @default(0) @db.Decimal(18, 2)
   permitCost    Decimal       @default(0) @db.Decimal(18, 2)
+  /// Σ PO kind PERMIT saja (tanpa SND) — dasar margin permit (turunan tabel PO)
+  permitPoAmount Decimal      @default(0) @db.Decimal(18, 2)
+  /// Catatan cluster (keputusan / konfirmasi user)
+  note          String?
   pajakRate     Decimal       @db.Decimal(16, 12)
   retensiRate   Decimal       @default(0.10) @db.Decimal(16, 12)
   /// Tanggal mulai implementasi (dari info "Implementasi: dd/mm/yyyy" atau diinput)
@@ -561,7 +567,12 @@ model ClientPayment {
   kind        TerminKind
   termin      Int
   pct         Decimal?            @db.Decimal(16, 12)
+  /// DPP (dasar pengenaan pajak) — pendapatan
   amount      Decimal             @db.Decimal(18, 2)
+  /// PPN keluaran (titipan, bukan pendapatan/biaya) = DPP × ppnRate
+  ppnRate     Decimal             @default(0.11) @db.Decimal(16, 12)
+  /// PPh dipotong klien = DPP × pphRate (default = pajakRate cluster)
+  pphRate     Decimal             @default(0) @db.Decimal(16, 12)
   keterangan  String?
   invoiceNo   String?
   invoiceDate DateTime?           @db.Date
@@ -722,6 +733,18 @@ model FieldOverride {
 }
 
 /// Notifikasi in-app (mis. pos/cluster melewati ambang budget). `key` mencegah notifikasi ganda.
+/// Status lintasan ambang over budget per cluster/pos (agar notifikasi hanya sekali per lintasan).
+model OverrunState {
+  key       String   @id
+  clusterId String
+  code      String
+  over      Boolean  @default(false)
+  since     DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clusterId])
+}
+
 model Notification {
   id        String    @id @default(cuid())
   userId    String

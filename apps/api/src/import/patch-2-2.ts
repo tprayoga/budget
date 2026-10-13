@@ -4,6 +4,7 @@ import { parseImplementationDate } from '@indotek/shared/xlsx';
 import type { AuditService } from '../audit/audit.service';
 import { money } from '../common/decimal';
 import { saveRule } from './rab-importer';
+import { terminTaxDefaults } from '../realization/termin-generator';
 import { ensureClusterPos, poRef, syncDerivedFromPos } from '../clusters/po-support';
 
 export const PATCH_22 = '2.2-keputusan-import';
@@ -92,7 +93,7 @@ export async function applyPatch22(prisma: PrismaClient, audit: AuditService, us
         const exists = await tx.clientPayment.findUnique({ where: { poId_termin: { poId: permitPo.id, termin: 1 } } });
         if (!exists) {
           const p = await tx.clientPayment.create({
-            data: { clusterId: c.id, poId: permitPo.id, fromTemplate: false, kind: 'PERMIT', termin: 1, pct: '1', amount: money(po), invoiceNo, status: 'INVOICED', keterangan: 'Permit 100% (sheet CCSI: Unpaid)' },
+            data: { ...(await terminTaxDefaults(tx, c.id)), clusterId: c.id, poId: permitPo.id, fromTemplate: false, kind: 'PERMIT', termin: 1, pct: '1', amount: money(po), invoiceNo, status: 'INVOICED', keterangan: 'Permit 100% (sheet CCSI: Unpaid)' },
           });
           await audit.diff(tx, userId, 'ClientPayment', p.id, null, { kind: 'PERMIT', termin: '1', amount: po, invoiceNo, status: 'INVOICED', alasan: REASON_PERMIT });
         }

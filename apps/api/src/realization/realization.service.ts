@@ -78,7 +78,7 @@ export class RealizationService {
     const p = pending.get(clusterId)!;
     const real = calcRealization(budget, v.byCode, setting.realisasiWarnPct, p.byCode);
     const profit = calcRealizedProfit(
-      payments.get(clusterId)!.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null })),
+      payments.get(clusterId)!.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null, ppnRate: x.ppnRate.toString() })),
       v.total,
     );
     return {
@@ -107,6 +107,7 @@ export class RealizationService {
         proyeksiProfit: m(calc.profit),
         pembayaranBruto: m(profit.pembayaranBruto),
         kasDiterima: m(profit.kasDiterima),
+        ppnTitipan: m(profit.ppnTitipan),
         realisasiBiaya: m(profit.realisasiBiaya),
         profitRealisasi: m(profit.profitRealisasi),
       },
@@ -120,10 +121,10 @@ export class RealizationService {
       this.allocationSums(clusterIds, 'PERLU_VERIFIKASI'),
       this.paymentsByCluster(clusterIds),
     ]);
-    const out = new Map<string, { realisasiBiaya: string; menungguVerifikasi: string; pembayaranBruto: string; kasDiterima: string; profitRealisasi: string }>();
+    const out = new Map<string, { realisasiBiaya: string; menungguVerifikasi: string; pembayaranBruto: string; kasDiterima: string; ppnTitipan: string; profitRealisasi: string }>();
     for (const id of clusterIds) {
       const p = calcRealizedProfit(
-        payments.get(id)!.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null })),
+        payments.get(id)!.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null, ppnRate: x.ppnRate.toString() })),
         verified.get(id)!.total,
       );
       out.set(id, {
@@ -131,6 +132,7 @@ export class RealizationService {
         menungguVerifikasi: m(pending.get(id)!.total),
         pembayaranBruto: m(p.pembayaranBruto),
         kasDiterima: m(p.kasDiterima),
+        ppnTitipan: m(p.ppnTitipan),
         profitRealisasi: m(p.profitRealisasi),
       });
     }

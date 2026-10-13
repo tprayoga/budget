@@ -4,7 +4,9 @@ import { z } from 'zod';
 import {
   categoryMappingSchema,
   applyInvoiceRefSchema,
+  applyMatchedRefsSchema,
   type ApplyInvoiceRefInput,
+  type ApplyMatchedRefsInput,
   clientPaymentCreateSchema,
   clientPaymentUpdateSchema,
   EXPENSE_CATEGORIES,
@@ -89,6 +91,14 @@ export class RealizationController {
   @ApiZodBody(clientPaymentUpdateSchema)
   updatePayment(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(clientPaymentUpdateSchema) body: ClientPaymentUpdateInput) {
     return this.payments.update(user, id, body);
+  }
+
+  /** Konfirmasi FINANCE: terapkan semua referensi RAB yang cocok (net = expectedNet ± Rp 10) di cluster ini. */
+  @Post('clusters/:id/client-payments/apply-matched')
+  @Roles('ADMIN', 'FINANCE')
+  @ApiZodBody(applyMatchedRefsSchema)
+  applyMatched(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(applyMatchedRefsSchema) body: ApplyMatchedRefsInput) {
+    return this.payments.applyMatched(user, id, body);
   }
 
   /** Terapkan referensi tagihan RAB ke termin (konfirmasi FINANCE; tidak pernah otomatis). */

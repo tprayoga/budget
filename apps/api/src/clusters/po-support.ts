@@ -87,10 +87,16 @@ export async function syncDerivedFromPos(db: Db, clusterId: string) {
   const t = derivePoTotals(pos.map((p) => ({ kind: p.kind, amount: p.amount.toString(), passThroughCost: p.passThroughCost.toString() })));
   const before = { nilaiPoImpl: s(c.nilaiPoImpl)!, nilaiPoPermit: s(c.nilaiPoPermit)!, permitCost: s(c.permitCost)! };
   const after = { nilaiPoImpl: t.nilaiPoImpl.toFixed(2), nilaiPoPermit: t.nilaiPoPermit.toFixed(2), permitCost: t.permitCost.toFixed(2) };
-  if (before.nilaiPoImpl !== after.nilaiPoImpl || before.nilaiPoPermit !== after.nilaiPoPermit || before.permitCost !== after.permitCost) {
+  const permitPoAmount = t.permitPoAmount.toFixed(2);
+  if (
+    before.nilaiPoImpl !== after.nilaiPoImpl ||
+    before.nilaiPoPermit !== after.nilaiPoPermit ||
+    before.permitCost !== after.permitCost ||
+    !c.permitPoAmount.eq(permitPoAmount)
+  ) {
     await db.cluster.update({
       where: { id: clusterId },
-      data: { nilaiPoImpl: money(after.nilaiPoImpl), nilaiPoPermit: money(after.nilaiPoPermit), permitCost: money(after.permitCost) },
+      data: { nilaiPoImpl: money(after.nilaiPoImpl), nilaiPoPermit: money(after.nilaiPoPermit), permitCost: money(after.permitCost), permitPoAmount: money(permitPoAmount) },
     });
   }
   return { before, after };

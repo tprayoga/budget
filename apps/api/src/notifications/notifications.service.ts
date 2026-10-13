@@ -48,6 +48,8 @@ export class NotificationsService {
       invoiceNo: p.invoiceNo,
       amount: p.amount.toFixed(2),
       status: p.status,
+      /** INVOICE = tanggal invoice kosong; PAID = dibayar (referensi RAB) tetapi tanggal diterima kosong */
+      missing: p.status === 'PAID' && !p.paidDate ? ('PAID' as const) : ('INVOICE' as const),
     }));
   }
 }

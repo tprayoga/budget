@@ -1,5 +1,5 @@
 import type { FrCode, PrismaClient } from '@prisma/client';
-import { BUDGET_LABEL, calcCluster, dec, frBudgetAmounts, FR_CODES, moneyStr, safeDiv, type D } from '@indotek/shared';
+import { BUDGET_LABEL, calcCluster, dec, formatAngka, formatTanggal, frBudgetAmounts, FR_CODES, moneyStr, safeDiv, todayJakartaIso, type D } from '@indotek/shared';
 import type { Tx } from '../prisma/prisma.service';
 import { clusterCalcInput } from '../budget/budget.mapper';
 
@@ -32,7 +32,9 @@ async function effectiveSettings(db: Db) {
   };
 }
 
-const isOver = (budget: D, real: D, threshold: D) => (budget.isZero() ? real.gt(0) : real.div(budget).gt(threshold));
+/** Pos: realisasi > ambang. Total cluster: realisasi ≥ ambang (Fase 2.4). Budget 0 dengan realisasi > 0 = over. */
+const isOver = (budget: D, real: D, threshold: D, inclusive = false) =>
+  budget.isZero() ? real.gt(0) : inclusive ? real.div(budget).gte(threshold) : real.div(budget).gt(threshold);
 
 /**
  * Pos/cluster yang realisasi terverifikasinya melewati ambang (Setting.realisasiOverPct, default 100%).
@@ -81,41 +83,80 @@ export async function computeOverruns(db: Db, clusterIds?: string[]): Promise<Ov
       tr = tr.plus(r);
       if (isOver(b, r, threshold)) push(code, b, r);
     }
-    if (isOver(tb, tr, threshold)) push('TOTAL', tb, tr);
+    if (isOver(tb, tr, threshold, true)) push('TOTAL', tb, tr);
   }
   return out;
 }
 
 export const overrunKey = (clusterId: string, code: string) => `OVER:${clusterId}:${code}`;
 
+const pctText = (v: string) => `${dec(v).times(100).toDecimalPlaces(1).toString().replace('.', ',')}%`;
+
 /**
- * Kirim notifikasi in-app ke PM & DIREKTUR (aktif) untuk pos/cluster yang baru melewati ambang.
- * Kunci OVER:{clusterId}:{pos} mencegah notifikasi ganda; bila pos kembali di bawah ambang, notifikasinya
- * dihapus sehingga akan dikirim lagi bila melewati ambang lagi.
+ * Pemindaian over budget (Fase 2.4), status lintasan disimpan di OverrunState:
+ *  - TOTAL cluster ≥ ambang → notifikasi langsung ke PM & DIREKTUR, sekali per lintasan ambang
+ *    (tidak berulang selama masih di atas ambang; dikirim lagi hanya bila turun lalu melewati ambang lagi).
+ *  - Pos yang > ambang → masuk "Ringkasan harian": 1 notifikasi per user per hari (Asia/Jakarta) berisi daftar
+ *    pos yang baru melewati ambang hari itu; pos baru berikutnya di hari yang sama ditambahkan ke ringkasan yang sama.
  */
 export async function scanOverruns(db: Db, clusterIds?: string[]) {
   const items = await computeOverruns(db, clusterIds);
   const scoped = clusterIds ?? (await db.cluster.findMany({ select: { id: true } })).map((c) => c.id);
+  const states = await db.overrunState.findMany({ where: { clusterId: { in: scoped } } });
+  const byKey = new Map(states.map((x) => [x.key, x]));
   const activeKeys = new Set(items.map((i) => overrunKey(i.clusterId, i.code)));
-  // re-arm: hapus notifikasi pos yang sudah tidak over
-  const stale = await db.notification.findMany({
-    where: { type: 'OVER_BUDGET', OR: scoped.map((id) => ({ key: { startsWith: `OVER:${id}:` } })) },
-    select: { id: true, key: true },
-  });
-  const staleIds = stale.filter((n) => !activeKeys.has(n.key)).map((n) => n.id);
-  if (staleIds.length) await db.notification.deleteMany({ where: { id: { in: staleIds } } });
-  if (!items.length) return { over: 0, created: 0 };
+  // turun di bawah ambang → re-arm (riwayat notifikasi tidak dihapus)
+  const rearm = states.filter((x) => x.over && !activeKeys.has(x.key)).map((x) => x.key);
+  if (rearm.length) await db.overrunState.updateMany({ where: { key: { in: rearm } }, data: { over: false } });
+
+  const crossed = items.filter((i) => !byKey.get(overrunKey(i.clusterId, i.code))?.over);
+  if (!crossed.length) return { over: items.length, crossedTotal: 0, crossedPos: 0, notifications: 0 };
+  const now = new Date();
+  for (const i of crossed) {
+    const key = overrunKey(i.clusterId, i.code);
+    await db.overrunState.upsert({ where: { key }, create: { key, clusterId: i.clusterId, code: i.code, over: true, since: now }, update: { over: true, since: now } });
+  }
   const users = await db.user.findMany({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true }, select: { id: true } });
-  const data = users.flatMap((u) =>
-    items.map((i) => ({
-      userId: u.id,
-      type: 'OVER_BUDGET',
-      key: overrunKey(i.clusterId, i.code),
-      title: `Over budget: ${i.clusterName}`,
-      body: `${i.label} terpakai ${dec(i.pctTerpakai).times(100).toDecimalPlaces(1).toString().replace('.', ',')}% (realisasi ${i.realisasi} / budget ${i.budget}) — ${i.projectCode}`,
-      link: `/clusters/${i.clusterId}?tab=realisasi`,
-    })),
-  );
-  const res = await db.notification.createMany({ data, skipDuplicates: true });
-  return { over: items.length, created: res.count };
+  let notifications = 0;
+
+  const totals = crossed.filter((i) => i.code === 'TOTAL');
+  if (totals.length) {
+    const res = await db.notification.createMany({
+      data: users.flatMap((u) =>
+        totals.map((i) => ({
+          userId: u.id,
+          type: 'OVER_BUDGET',
+          key: `${overrunKey(i.clusterId, 'TOTAL')}:${now.toISOString()}`,
+          title: `Over budget: ${i.clusterName}`,
+          body: `Total realisasi ${pctText(i.pctTerpakai)} dari budget (Rp ${formatAngka(i.realisasi)} / Rp ${formatAngka(i.budget)}) — ${i.projectCode}`,
+          link: `/clusters/${i.clusterId}?tab=realisasi`,
+        })),
+      ),
+      skipDuplicates: true,
+    });
+    notifications += res.count;
+  }
+
+  const posItems = crossed.filter((i) => i.code !== 'TOTAL');
+  if (posItems.length) {
+    const today = todayJakartaIso();
+    const lines = posItems.map((i) => `• ${i.projectCode} ${i.clusterName} — ${i.label}: ${Number(i.budget) ? pctText(i.pctTerpakai) : 'budget 0'} (Rp ${formatAngka(i.realisasi)} / Rp ${formatAngka(i.budget)})`);
+    for (const u of users) {
+      const key = `DIGEST:${today}`;
+      const prev = await db.notification.findUnique({ where: { userId_key: { userId: u.id, key } } });
+      if (prev) {
+        await db.notification.update({ where: { id: prev.id }, data: { body: `${prev.body}\n${lines.join('\n')}`, readAt: null, title: digestTitle(today, prev.body.split('\n').length + lines.length) } });
+      } else {
+        await db.notification.create({
+          data: { userId: u.id, type: 'OVER_BUDGET_DIGEST', key, title: digestTitle(today, lines.length), body: lines.join('\n'), link: '/rekap' },
+        });
+        notifications++;
+      }
+    }
+  }
+  return { over: items.length, crossedTotal: totals.length, crossedPos: posItems.length, notifications };
+}
+
+function digestTitle(day: string, n: number) {
+  return `Ringkasan harian over budget ${formatTanggal(day)} — ${n} pos`;
 }

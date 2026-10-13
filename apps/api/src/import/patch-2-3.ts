@@ -4,7 +4,7 @@ import type { AuditService } from '../audit/audit.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { money } from '../common/decimal';
 import { ensureClusterPos, linkOrphanTermins, markOverride, poFlat, poRef, syncDerivedFromPos } from '../clusters/po-support';
-import { generateClientPayments } from '../realization/termin-generator';
+import { generateClientPayments, terminTaxDefaults } from '../realization/termin-generator';
 import { ExpenseSupportService } from '../realization/expense-support.service';
 import { saveRule } from './rab-importer';
 import { releaseHeldExpense } from './held-items.service';
@@ -91,7 +91,7 @@ export async function applyPatch23(prisma: PrismaClient, audit: AuditService, us
         await markOverride(tx, semarang.id, ['nilaiPoPermit', 'permitCost'], userId, KONFIRMASI);
         // CCSI tanpa template → termin manual 1 × 100%, UNBILLED, tanggal invoice kosong
         const t = await tx.clientPayment.create({
-          data: { clusterId: semarang.id, poId: semPo.id, fromTemplate: false, kind: 'PERMIT', termin: 1, pct: '1', amount: money(SEMARANG_PERMIT), keterangan: 'Permit 100%' },
+          data: { ...(await terminTaxDefaults(tx, semarang.id)), clusterId: semarang.id, poId: semPo.id, fromTemplate: false, kind: 'PERMIT', termin: 1, pct: '1', amount: money(SEMARANG_PERMIT), keterangan: 'Permit 100%' },
         });
         await audit.diff(tx, userId, 'ClientPayment', t.id, null, { kind: 'PERMIT', termin: '1', amount: SEMARANG_PERMIT, status: 'UNBILLED', alasan: KONFIRMASI });
         log.push('Semarang: PO PERMIT 36.000.000 pass-through + termin permit UNBILLED');

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
-import { moneyStr, sum } from '@indotek/shared';
+import { dec, moneyStr, sum, todayJakartaIso } from '@indotek/shared';
 import { clusterId, createApp } from './helpers';
 
 const RAB = path.resolve(__dirname, '../../../docs/samples/RAB_Project_TELCO_-_IBK_1.sample.xlsx');
@@ -29,7 +29,7 @@ describe('PO per cluster (ClusterPo) — nilai turunan, termin per PO, audit', (
     expect(await ctx.prisma.clientPayment.count({ where: { poId: null } })).toBe(0);
   });
 
-  it('ADDWORK & DEDUCTION: nilaiPoImpl = Σ IMPLEMENTASI + ADDWORK + DEDUCTION; termin 1 × 100% manual; validasi tanda', async () => {
+  it('ADDWORK & DEDUCTION: nilaiPoImpl = Σ IMPLEMENTASI + ADDWORK + DEDUCTION; tidak punya termin sendiri; validasi tanda', async () => {
     const id = await clusterId(ctx.prisma, 'ADW', 'WANASARI RW 02 SUBANG');
     const before = (await cluster(id)).nilaiPoImpl.toString();
     await ctx.api('finance').post(`/clusters/${id}/pos`, { kind: 'ADDWORK', amount: '100000' }).expect(403);
@@ -39,18 +39,55 @@ describe('PO per cluster (ClusterPo) — nilai turunan, termin per PO, audit', (
     const ded = await ctx.api('pm').post(`/clusters/${id}/pos`, { kind: 'DEDUCTION', amount: '-150000', note: 'uji' }).expect(201);
     expect((await cluster(id)).nilaiPoImpl.toString()).toBe(moneyStr(sum([before, '400000', '-150000'])).replace(/\.00$/, ''));
     const t = await ctx.api('finance').get(`/clusters/${id}/client-payments`).expect(200);
-    const addT = t.body.payments.filter((p: { poId: string }) => p.poId === add.body.id);
-    expect(addT).toEqual([expect.objectContaining({ kind: 'ADDWORK', termin: 1, amount: '400000', fromTemplate: false, needsInvoiceDate: true })]);
-    expect(t.body.payments.find((p: { poId: string }) => p.poId === ded.body.id)).toMatchObject({ kind: 'DEDUCTION', amount: '-150000' });
+    expect(t.body.payments.filter((p: { poId: string }) => p.poId === add.body.id || p.poId === ded.body.id)).toEqual([]);
     // audit: PO + nilai cluster lama → baru; field ditandai diedit di aplikasi
     expect(await ctx.prisma.auditLog.count({ where: { entity: 'ClusterPo', entityId: add.body.id } })).toBeGreaterThan(0);
     const log = await ctx.prisma.auditLog.findFirst({ where: { entity: 'Cluster', entityId: id, field: 'nilaiPoImpl' }, orderBy: { at: 'desc' } });
     expect(log?.oldValue).toBeTruthy();
     expect(await ctx.prisma.fieldOverride.findUnique({ where: { entity_entityId_field: { entity: 'Cluster', entityId: id, field: 'nilaiPoImpl' } } })).not.toBeNull();
-    // hapus → termin UNBILLED ikut terhapus, nilai kembali
     await ctx.api('pm').del(`/clusters/pos/${add.body.id}`).expect(200);
     await ctx.api('pm').del(`/clusters/pos/${ded.body.id}`).expect(200);
     expect((await cluster(id)).nilaiPoImpl.toString()).toBe(before);
+    await ctx.prisma.fieldOverride.deleteMany({ where: { entityId: id } });
+  });
+
+  it('Acuan R — koreksi addwork/deduction masuk TERMIN 1 (80% × PO dasar + Σ koreksi); termin 1 ditagih → termin berikutnya + peringatan; termin terpisah 2.3 dihapus', async () => {
+    const id = await clusterId(ctx.prisma, 'ADW', 'WANASARI RW 02 SUBANG');
+    const impl = await ctx.prisma.clusterPo.findFirstOrThrow({ where: { clusterId: id, kind: 'IMPLEMENTASI' } });
+    const base = impl.amount.toString(); // 13.949.300
+    const add = await ctx.api('pm').post(`/clusters/${id}/pos`, { kind: 'ADDWORK', amount: '400000' }).expect(201);
+    const ded = await ctx.api('pm').post(`/clusters/${id}/pos`, { kind: 'DEDUCTION', amount: '-150000' }).expect(201);
+    // simulasi termin terpisah gaya Fase 2.3 → harus dihapus saat hitung ulang
+    const legacy = await ctx.prisma.clientPayment.create({ data: { clusterId: id, poId: add.body.id, kind: 'ADDWORK', termin: 1, pct: '1', amount: '400000', fromTemplate: false } });
+    const prev = await ctx.api('finance').get(`/clusters/${id}/client-payments/recalculate`).expect(200);
+    const k = prev.body.kinds.find((x: { kind: string }) => x.kind === 'IMPLEMENTASI');
+    expect(k.adjustment).toBe('250000.00');
+    const t1 = k.diffs.find((d: { termin: number }) => d.termin === 1);
+    expect(t1.newAmount).toBe(moneyStr(sum([dec(base).times('0.8').toString(), '250000'])));
+    expect(k.target).toBe(moneyStr(sum([base, '250000'])));
+    const del = prev.body.kinds.find((x: { kind: string }) => x.kind === 'ADDWORK');
+    expect(del.diffs).toEqual([expect.objectContaining({ id: legacy.id, deleted: true })]);
+    await ctx.api('finance').post(`/clusters/${id}/client-payments/recalculate`).expect(200);
+    expect(await ctx.prisma.clientPayment.findUnique({ where: { id: legacy.id } })).toBeNull();
+    const rows = await ctx.prisma.clientPayment.findMany({ where: { poId: impl.id }, orderBy: { termin: 'asc' } });
+    expect(rows[0].amount.toFixed(2)).toBe(t1.newAmount);
+    expect(moneyStr(sum(rows.map((r) => r.amount.toString())))).toBe(moneyStr(sum([base, '250000'])));
+
+    // termin 1 sudah ditagih → koreksi berikutnya masuk termin 2 + peringatan
+    await ctx.api('finance').patch(`/client-payments/${rows[0].id}`, { invoiceDate: '2026-10-01' }).expect(200);
+    const add2 = await ctx.api('pm').post(`/clusters/${id}/pos`, { kind: 'ADDWORK', amount: '100000' }).expect(201);
+    const prev2 = await ctx.api('finance').get(`/clusters/${id}/client-payments/recalculate`).expect(200);
+    const k2 = prev2.body.kinds.find((x: { kind: string }) => x.kind === 'IMPLEMENTASI');
+    expect(k2.warning).toMatch(/Termin 1 sudah ditagih — koreksi addwork\/deduction Rp 350000.00 masuk ke termin 2/);
+    expect(k2.diffs.find((d: { termin: number }) => d.termin === 1)).toMatchObject({ status: 'INVOICED', changed: false });
+    expect(k2.diffs.find((d: { termin: number }) => d.termin === 2).newAmount).toBe(moneyStr(sum([dec(base).times('0.1').toString(), '350000'])));
+
+    // bersihkan
+    for (const po of [add, ded, add2]) await ctx.api('pm').del(`/clusters/pos/${po.body.id}`).expect(200);
+    await ctx.api('finance').patch(`/client-payments/${rows[0].id}`, { invoiceDate: null }).expect(200);
+    await ctx.api('finance').post(`/clusters/${id}/client-payments/recalculate`).expect(200);
+    const back = await ctx.prisma.clientPayment.findMany({ where: { poId: impl.id }, orderBy: { termin: 'asc' } });
+    expect(moneyStr(sum(back.map((r) => r.amount.toString())))).toBe(moneyStr(base));
     await ctx.prisma.fieldOverride.deleteMany({ where: { entityId: id } });
   });
 
@@ -118,33 +155,53 @@ describe('Proteksi import budget (manualOverride)', () => {
 });
 
 describe('Notifikasi over budget (PM & DIREKTUR) + daftar Rekap', () => {
-  it('pos melewati 100% → notifikasi sekali; kembali di bawah → notifikasi dilepas', async () => {
+  const expense = (clusterId: string, category: string, amount: string) =>
+    ctx.api('finance').post('/expenses', { clusterId, date: '2026-10-14', category, description: `Uji over ${category}`, amount }).expect(201);
+  const recipients = () => ctx.prisma.user.count({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true } });
+
+  it('pos > ambang → tidak langsung, masuk "Ringkasan harian" (1 per user per hari, pos baru ditambahkan); Rekap memuat pos', async () => {
     const id = await clusterId(ctx.prisma, 'ADW', 'SINDANG RW 01 MAJALENGKA');
-    const key = `OVER:${id}:TICKET`;
+    const digestKey = `DIGEST:${todayJakartaIso()}`;
     // budget TICKET 0 → realisasi apa pun = over
-    const e = await ctx.api('finance').post('/expenses', { clusterId: id, date: '2026-10-14', category: 'TICKET', description: 'Tiket uji', amount: '250000' }).expect(201);
-    const pmList = await ctx.api('pm').get('/notifications').expect(200);
-    const n = pmList.body.items.find((x: { key: string }) => x.key === key);
-    expect(n).toMatchObject({ type: 'OVER_BUDGET', title: 'Over budget: SINDANG RW 01 MAJALENGKA' });
-    expect(pmList.body.unread).toBeGreaterThan(0);
-    const dir = await ctx.api('direktur').get('/notifications').expect(200);
-    expect(dir.body.items.some((x: { key: string }) => x.key === key)).toBe(true);
+    const e = await expense(id, 'TICKET', '250000');
+    expect(await ctx.prisma.notification.count({ where: { key: { startsWith: `OVER:${id}:` } } })).toBe(0);
+    const pm = await ctx.api('pm').get('/notifications').expect(200);
+    const digest = pm.body.items.find((x: { key: string }) => x.key === digestKey);
+    expect(digest).toMatchObject({ type: 'OVER_BUDGET_DIGEST', link: '/rekap' });
+    expect(digest.title).toMatch(/^Ringkasan harian over budget/);
+    expect(digest.body).toContain('SINDANG RW 01 MAJALENGKA — Ticket Internal: budget 0 (Rp 250.000 / Rp 0)');
     const fin = await ctx.api('finance').get('/notifications').expect(200);
-    expect(fin.body.items.some((x: { key: string }) => x.key === key)).toBe(false);
-    // rekap
+    expect(fin.body.items.some((x: { key: string }) => x.key === digestKey)).toBe(false);
+    // pos yang sama tidak diulang; pos baru ditambahkan ke ringkasan yang sama
+    const e2 = await expense(id, 'TICKET', '1000');
+    const e3 = await expense(id, 'MOTOR_MOBIL', '5000000');
+    expect(await ctx.prisma.notification.count({ where: { key: digestKey } })).toBe(await recipients());
+    const body = (await ctx.prisma.notification.findFirstOrThrow({ where: { key: digestKey } })).body;
+    expect(body.match(/SINDANG RW 01 MAJALENGKA — Ticket Internal/g)).toHaveLength(1);
+    expect(body).toContain('SINDANG RW 01 MAJALENGKA — Motor dan Mobil');
     const rekap = await ctx.api('direktur').get('/budget/rekap').expect(200);
-    expect(rekap.body.overBudget).toEqual(expect.arrayContaining([expect.objectContaining({ clusterId: id, code: 'TICKET', realisasi: '250000.00' })]));
-    // tidak dobel saat expense lain masuk
-    const e2 = await ctx.api('finance').post('/expenses', { clusterId: id, date: '2026-10-14', category: 'TICKET', description: 'Tiket uji 2', amount: '1000' }).expect(201);
-    const recipients = await ctx.prisma.user.count({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true } });
-    expect(await ctx.prisma.notification.count({ where: { key } })).toBe(recipients);
-    // tandai dibaca
-    await ctx.api('pm').post(`/notifications/${n.id}/read`).expect(201);
-    await ctx.api('direktur').post(`/notifications/${n.id}/read`).expect(404);
-    // hapus expense → re-arm
-    await ctx.api('finance').del(`/expenses/${e.body.id}`).expect(200);
-    await ctx.api('finance').del(`/expenses/${e2.body.id}`).expect(200);
-    expect(await ctx.prisma.notification.count({ where: { key } })).toBe(0);
+    expect(rekap.body.overBudget).toEqual(expect.arrayContaining([expect.objectContaining({ clusterId: id, code: 'TICKET', realisasi: '251000.00' })]));
+    await ctx.api('pm').post(`/notifications/${digest.id}/read`).expect(201);
+    await ctx.api('direktur').post(`/notifications/${digest.id}/read`).expect(404);
+    for (const x of [e, e2, e3]) await ctx.api('finance').del(`/expenses/${x.body.id}`).expect(200);
+    // kembali di bawah ambang → status lintasan dilepas (riwayat notifikasi tetap)
+    expect(await ctx.prisma.overrunState.count({ where: { clusterId: id, over: true, code: { in: ['TICKET', 'MOTOR_MOBIL'] } } })).toBe(0);
+  });
+
+  it('TOTAL cluster ≥ 100% → notifikasi langsung PM & DIREKTUR, sekali per lintasan ambang', async () => {
+    const id = await clusterId(ctx.prisma, 'ADW', 'SINDANG RW 01 MAJALENGKA');
+    const prefix = `OVER:${id}:TOTAL:`;
+    const n = () => ctx.prisma.notification.count({ where: { key: { startsWith: prefix }, type: 'OVER_BUDGET' } });
+    const big = await expense(id, 'SUBCON_JASA', '30000000');
+    expect(await n()).toBe(await recipients());
+    const pm = await ctx.api('pm').get('/notifications').expect(200);
+    expect(pm.body.items.find((x: { key: string }) => x.key.startsWith(prefix)).body).toMatch(/^Total realisasi \d+,\d% dari budget/);
+    const more = await expense(id, 'OPS', '100000');
+    expect(await n()).toBe(await recipients()); // masih di atas ambang → tidak berulang
+    await ctx.api('finance').del(`/expenses/${big.body.id}`).expect(200);
+    const again = await expense(id, 'SUBCON_JASA', '30000000');
+    expect(await n()).toBe(2 * (await recipients())); // lintasan kedua
+    for (const x of [more, again]) await ctx.api('finance').del(`/expenses/${x.body.id}`).expect(200);
   });
 
   it('ambang dari Setting (realisasiOverPct)', async () => {
@@ -161,7 +218,7 @@ describe('Termin klien: tanggal invoice belum diisi + referensi tagihan RAB', ()
     await ctx.api('pm').get('/inbox/missing-invoice-dates').expect(403);
   });
 
-  it('terapkan referensi: bruto dari FINANCE, paidAmount = net referensi, potongan → PAJAK; tidak bisa dua kali', async () => {
+  it('terapkan referensi: DPP dari FINANCE, paidAmount = net referensi, potongan (DPP + PPN − net) → PAJAK; tidak bisa dua kali', async () => {
     const id = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Kersanagara RW 08 Tasik');
     const c = await cluster(id);
     const ref = await ctx.prisma.clientInvoiceRef.create({
@@ -171,17 +228,75 @@ describe('Termin klien: tanggal invoice belum diisi + referensi tagihan RAB', ()
     expect(list.body.invoiceRefs.map((r: { invoiceNo: string }) => r.invoiceNo)).toContain('I-UJI-001');
     const t1 = list.body.payments.find((p: { kind: string; termin: number }) => p.kind === 'IMPLEMENTASI' && p.termin === 1);
     await ctx.api('pm').post(`/client-payments/${t1.id}/apply-reference`, { refId: ref.id, amount: '1000000' }).expect(403);
-    await ctx.api('finance').post(`/client-payments/${t1.id}/apply-reference`, { refId: ref.id, amount: '900000' }).expect(400);
+    // net 980.000 > tagihan DPP 800.000 + PPN 88.000 → ditolak
+    await ctx.api('finance').post(`/client-payments/${t1.id}/apply-reference`, { refId: ref.id, amount: '800000' }).expect(400);
     const res = await ctx.api('finance').post(`/client-payments/${t1.id}/apply-reference`, { refId: ref.id, amount: '1000000', paidDate: '2026-10-14' }).expect(201);
-    expect(res.body).toMatchObject({ amount: '1000000', paidAmount: '980000', status: 'PAID', invoiceNo: 'I-UJI-001', potongan: '20000.00' });
+    expect(res.body).toMatchObject({ amount: '1000000', ppnAmount: '110000.00', invoiceTotal: '1110000.00', paidAmount: '980000', status: 'PAID', invoiceNo: 'I-UJI-001', potongan: '130000.00' });
     const tax = await ctx.prisma.expense.findUniqueOrThrow({ where: { sourceRef: `CLIENT_PAYMENT:${t1.id}` } });
     expect(tax).toMatchObject({ category: 'PAJAK' });
-    expect(tax.amount.toString()).toBe('20000');
+    expect(tax.amount.toString()).toBe('130000');
     await ctx.api('finance').post(`/client-payments/${t1.id}/apply-reference`, { refId: ref.id, amount: '1000000' }).expect(409);
     // kembalikan termin
     await ctx.api('finance').patch(`/client-payments/${t1.id}`, { amount: t1.amount, invoiceNo: null, invoiceDate: null, paidDate: null, paidAmount: null, dueDate: null }).expect(200);
     await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
     expect(await ctx.prisma.expense.findUnique({ where: { sourceRef: `CLIENT_PAYMENT:${t1.id}` } })).toBeNull();
+  });
+});
+
+describe('Acuan Q — PPN termin klien & pencocokan referensi RAB (Fase 2.4)', () => {
+  it('Sinagar permit termin 1: expectedNet 20.044.750 → referensi cocok otomatis (usulan), dikonfirmasi FINANCE → PAJAK 490.250, PPN titipan 2.035.000', async () => {
+    const sinagar = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Sinagar Tasik');
+    const c = await cluster(sinagar);
+    let list = await ctx.api('finance').get(`/clusters/${sinagar}/client-payments`).expect(200);
+    const ppnBefore = list.body.totals.ppnTitipan as string;
+    const permit1 = list.body.payments.find((p: { kind: string; termin: number }) => p.kind === 'PERMIT' && p.termin === 1);
+    expect(permit1).toMatchObject({ amount: '18500000', ppnRate: '0.11', pphRate: '0.0265', ppnAmount: '2035000.00', pphAmount: '490250.00', invoiceTotal: '20535000.00', expectedNet: '20044750.00' });
+    const existing = await ctx.prisma.clientInvoiceRef.findFirst({ where: { invoiceNo: 'I2628-00139' } });
+    const ref =
+      existing ??
+      (await ctx.prisma.clientInvoiceRef.create({
+        data: { sourceRef: 'UJI:I2628-00139', projectId: c.projectId, clusterId: sinagar, blockTitle: 'Cluster Sinagar Tasik - Permit', termin: 1, invoiceNo: 'I2628-00139', netAmount: '20044750', statusText: 'Paid', paid: true },
+      }));
+    list = await ctx.api('finance').get(`/clusters/${sinagar}/client-payments`).expect(200);
+    const r = list.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id);
+    expect(r.suggestion).toMatchObject({ paymentId: permit1.id, kind: 'PERMIT', termin: 1, expectedNet: '20044750.00', selisih: '0.00' });
+    // usulan saja — belum diterapkan
+    expect((await ctx.prisma.clientPayment.findUniqueOrThrow({ where: { id: permit1.id } })).status).not.toBe('PAID');
+    await ctx.api('pm').post(`/clusters/${sinagar}/client-payments/apply-matched`, { refIds: [ref.id] }).expect(403);
+    const res = await ctx.api('finance').post(`/clusters/${sinagar}/client-payments/apply-matched`, { refIds: [ref.id], paidDate: '2026-09-30' }).expect(201);
+    expect(res.body.applied).toEqual([expect.objectContaining({ refId: ref.id, paymentId: permit1.id })]);
+    const after = await ctx.prisma.clientPayment.findUniqueOrThrow({ where: { id: permit1.id } });
+    expect(after.status).toBe('PAID');
+    expect(after.amount.toString()).toBe('18500000');
+    expect(after.paidAmount!.toString()).toBe('20044750');
+    const tax = await ctx.prisma.expense.findUniqueOrThrow({ where: { sourceRef: `CLIENT_PAYMENT:${permit1.id}` } });
+    expect(tax.amount.toString()).toBe('490250');
+    list = await ctx.api('finance').get(`/clusters/${sinagar}/client-payments`).expect(200);
+    expect(list.body.totals.ppnTitipan).toBe(moneyStr(sum([ppnBefore, '2035000'])));
+    const real = await ctx.api('finance').get(`/clusters/${sinagar}/realization`).expect(200);
+    expect(real.body.profit.ppnTitipan).toBe(moneyStr(sum([ppnBefore, '2035000'])));
+    // kembalikan
+    await ctx.prisma.clientInvoiceRef.update({ where: { id: ref.id }, data: { appliedPaymentId: null, appliedAt: null, appliedById: null } });
+    await ctx.api('finance').patch(`/client-payments/${permit1.id}`, { invoiceNo: null, paidDate: null, paidAmount: null }).expect(200);
+    if (!existing) await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
+  });
+
+  it('referensi Paid tanpa tanggal: status Dibayar, tanggal diterima kosong → badge & inbox FINANCE', async () => {
+    const id = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Kersanagara RW 04 Tasik');
+    const c = await cluster(id);
+    const list = await ctx.api('finance').get(`/clusters/${id}/client-payments`).expect(200);
+    const t = list.body.payments.find((p: { kind: string; termin: number }) => p.kind === 'PERMIT' && p.termin === 2);
+    const ref = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:REF-NODATE', projectId: c.projectId, clusterId: id, termin: 2, invoiceNo: 'I-UJI-ND', netAmount: t.expectedNet, statusText: 'Paid', paid: true },
+    });
+    await ctx.api('finance').post(`/clusters/${id}/client-payments/apply-matched`, { refIds: [ref.id] }).expect(201);
+    const row = (await ctx.api('finance').get(`/clusters/${id}/client-payments`).expect(200)).body.payments.find((p: { id: string }) => p.id === t.id);
+    expect(row).toMatchObject({ status: 'PAID', paidDate: null, needsPaidDate: true });
+    const inbox = await ctx.api('finance').get('/inbox/missing-invoice-dates').expect(200);
+    expect(inbox.body.find((x: { id: string }) => x.id === t.id)).toMatchObject({ missing: 'PAID' });
+    await ctx.prisma.clientInvoiceRef.update({ where: { id: ref.id }, data: { appliedPaymentId: null } });
+    await ctx.api('finance').patch(`/client-payments/${t.id}`, { invoiceNo: null, paidAmount: null, paidDate: null }).expect(200);
+    await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
   });
 });
 

@@ -13,12 +13,14 @@ export interface PoRow {
  *   nilaiPoPermit = Σ PERMIT + SND
  *   permitCost    = Σ passThroughCost
  */
-export function derivePoTotals(pos: PoRow[]): { nilaiPoImpl: D; nilaiPoPermit: D; permitCost: D } {
+export function derivePoTotals(pos: PoRow[]): { nilaiPoImpl: D; nilaiPoPermit: D; permitCost: D; permitPoAmount: D } {
   const of = (kinds: PoKind[]) => sum(pos.filter((p) => kinds.includes(p.kind)).map((p) => p.amount));
   return {
     nilaiPoImpl: of(['IMPLEMENTASI', 'ADDWORK', 'DEDUCTION']),
     nilaiPoPermit: of(['PERMIT', 'SND']),
     permitCost: sum(pos.map((p) => dec(p.passThroughCost))),
+    /** Σ PERMIT saja — dasar margin permit (tanpa SND). */
+    permitPoAmount: of(['PERMIT']),
   };
 }
 

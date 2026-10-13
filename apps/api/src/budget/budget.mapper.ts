@@ -11,6 +11,7 @@ export function clusterCalcInput(
   return {
     nilaiPoImpl: c.nilaiPoImpl.toString(),
     nilaiPoPermit: c.nilaiPoPermit.toString(),
+    permitPoAmount: c.permitPoAmount.toString(),
     permitCost: c.permitCost.toString(),
     pajakRate: c.pajakRate.toString(),
     retensiRate: c.retensiRate.toString(),
@@ -38,6 +39,8 @@ export function clusterDto(c: ClusterWithLines) {
     nilaiPoImpl: s(c.nilaiPoImpl)!,
     nilaiPoPermit: s(c.nilaiPoPermit)!,
     permitCost: s(c.permitCost)!,
+    permitPoAmount: s(c.permitPoAmount)!,
+    note: c.note,
     pajakRate: s(c.pajakRate)!,
     retensiRate: s(c.retensiRate)!,
     implementationDate: c.implementationDate ? c.implementationDate.toISOString().slice(0, 10) : null,

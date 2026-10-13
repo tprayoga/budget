@@ -7,7 +7,7 @@ import { rate, s } from '../common/decimal';
 
 /** Nilai awal baris Setting global (default model Setting sesuai spesifikasi). */
 /** Fase 2.3: default resmi retensiAsCost = false (retensi = piutang, bukan biaya). */
-export const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: false, realisasiWarnPct: '0.8', realisasiOverPct: '1' } as const;
+export const GLOBAL_DEFAULTS = { interestRate: '0.10', retensiAsCost: false, realisasiWarnPct: '0.8', realisasiOverPct: '1', ppnRate: '0.11' } as const;
 
 export interface EffectiveSetting {
   interestRate: string;
@@ -19,11 +19,13 @@ export interface EffectiveSetting {
   realisasiWarnPct: string;
   /** Ambang notifikasi over budget (rasio, default 1 = 100%). */
   realisasiOverPct: string;
+  /** Tarif PPN keluaran termin klien (default 0,11). */
+  ppnRate: string;
   /** Field yang di-override di level project. */
   overridden: (keyof SettingInput)[];
 }
 
-type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama' | 'realisasiWarnPct' | 'realisasiOverPct';
+type SettingField = 'interestRate' | 'retensiAsCost' | 'rekeningBank' | 'rekeningNo' | 'rekeningNama' | 'realisasiWarnPct' | 'realisasiOverPct' | 'ppnRate';
 
 function dto(row: Setting | null) {
   return row
@@ -37,6 +39,7 @@ function dto(row: Setting | null) {
         rekeningNama: row.rekeningNama,
         realisasiWarnPct: s(row.realisasiWarnPct),
         realisasiOverPct: s(row.realisasiOverPct),
+        ppnRate: s(row.ppnRate),
         updatedAt: row.updatedAt,
       }
     : null;
@@ -89,17 +92,18 @@ export class SettingsService {
       rekeningNama: pick('rekeningNama'),
       realisasiWarnPct: (pick('realisasiWarnPct') ?? GLOBAL_DEFAULTS.realisasiWarnPct).toString(),
       realisasiOverPct: (pick('realisasiOverPct') ?? GLOBAL_DEFAULTS.realisasiOverPct).toString(),
+      ppnRate: (pick('ppnRate') ?? GLOBAL_DEFAULTS.ppnRate).toString(),
       overridden,
     };
   }
 
   /** Hanya ADMIN (dijaga di controller). Semua perubahan tercatat di AuditLog. */
-  async updateGlobal(userId: string, input: SettingInput) {
+  async updateGlobal(userId: string | null, input: SettingInput) {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.globalRow(tx);
       const data = this.toData(input);
       const after = await tx.setting.update({ where: { id: before.id }, data });
-      await this.audit.diff(tx, userId, 'Setting', before.id, dto(before), this.pickChanged(dto(after), data));
+      await this.audit.diff(tx, userId, 'Setting', before.id, { ...dto(before), alasan: null }, { ...this.pickChanged(dto(after), data), ...(input.reason ? { alasan: input.reason } : {}) });
       return dto(after);
     });
   }
@@ -123,6 +127,7 @@ export class SettingsService {
     if (input.retensiAsCost !== undefined) data.retensiAsCost = input.retensiAsCost;
     if (input.realisasiWarnPct !== undefined) data.realisasiWarnPct = input.realisasiWarnPct === null ? null : rate(input.realisasiWarnPct);
     if (input.realisasiOverPct !== undefined) data.realisasiOverPct = input.realisasiOverPct === null ? null : rate(input.realisasiOverPct);
+    if (input.ppnRate !== undefined) data.ppnRate = input.ppnRate === null ? null : rate(input.ppnRate);
     for (const k of ['rekeningBank', 'rekeningNo', 'rekeningNama'] as const) {
       if (input[k] !== undefined) data[k] = input[k] || null;
     }

@@ -92,7 +92,7 @@ async function main() {
     });
     const payments = await prisma.clientPayment.findMany({ where: { cluster: { projectId: sheet.projectId } } });
     const p = calcRealizedProfit(
-      payments.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null })),
+      payments.map((x) => ({ status: x.status, amount: x.amount.toString(), paidAmount: x.paidAmount?.toString() ?? null, ppnRate: x.ppnRate.toString() })),
       realisasi._sum.amount?.toString() ?? '0',
     );
     rekap.push(

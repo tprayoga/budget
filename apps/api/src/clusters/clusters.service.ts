@@ -26,6 +26,7 @@ import { ensureClusterPos, markOverride, poDto, PO_DERIVED_FIELDS } from './po-s
 const CLUSTER_FIELDS = [
   'name',
   'info',
+  'note',
   'division',
   'status',
   'nilaiPoImpl',
@@ -158,6 +159,7 @@ export class ClustersService {
             projectId: input.projectId,
             name: input.name,
             info: input.info ?? null,
+            note: input.note ?? null,
             division: input.division ?? null,
             status: input.status,
             nilaiPoImpl: money(input.nilaiPoImpl),
@@ -194,6 +196,7 @@ export class ClustersService {
         const data: Prisma.ClusterUpdateInput = {};
         if (input.name !== undefined) data.name = input.name;
         if (input.info !== undefined) data.info = input.info ?? null;
+        if (input.note !== undefined) data.note = input.note || null;
         if (input.division !== undefined) data.division = input.division ?? null;
         if (input.status !== undefined) data.status = input.status;
         // Fase 2.3: nilai PO & biaya permit diturunkan dari tabel PO — edit lewat PO, bukan langsung

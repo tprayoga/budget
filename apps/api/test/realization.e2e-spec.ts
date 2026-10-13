@@ -69,8 +69,8 @@ describe('Acceptance K — pembayaran klien → expense PAJAK otomatis', () => {
     expect(res.body).toMatchObject({ status: 'INVOICED', dueDate: '2026-10-16' });
   });
 
-  it('bruto 10.000.000 diterima 9.735.000 → PAJAK 265.000; diubah 9.750.000 → 250.000', async () => {
-    const paid = await ctx.api('finance').patch(`/client-payments/${paymentId}`, { paidDate: '2026-10-10', paidAmount: '9735000' }).expect(200);
+  it('DPP 10.000.000 + PPN 11% = 11.100.000, diterima 10.835.000 → PAJAK 265.000; diubah 10.850.000 → 250.000', async () => {
+    const paid = await ctx.api('finance').patch(`/client-payments/${paymentId}`, { paidDate: '2026-10-10', paidAmount: '10835000' }).expect(200);
     expect(paid.body).toMatchObject({ status: 'PAID', potongan: '265000.00' });
     const tax = () => ctx.prisma.expense.findUniqueOrThrow({ where: { sourceRef: `CLIENT_PAYMENT:${paymentId}` }, include: { allocations: true } });
     let e = await tax();
@@ -78,7 +78,7 @@ describe('Acceptance K — pembayaran klien → expense PAJAK otomatis', () => {
     expect(e.amount.toString()).toBe('265000');
     expect(e.allocations.map((a) => a.clusterId)).toEqual([sinagar]);
 
-    await ctx.api('finance').patch(`/client-payments/${paymentId}`, { paidAmount: '9750000' }).expect(200);
+    await ctx.api('finance').patch(`/client-payments/${paymentId}`, { paidAmount: '10850000' }).expect(200);
     e = await tax();
     expect(e.amount.toString()).toBe('250000');
 
@@ -88,7 +88,7 @@ describe('Acceptance K — pembayaran klien → expense PAJAK otomatis', () => {
 
     const r = await realization(sinagar);
     expect(r.row('PAJAK').realisasi).toBe('250000.00');
-    expect(r.body.profit).toMatchObject({ pembayaranBruto: '10000000.00', kasDiterima: '9750000.00' });
+    expect(r.body.profit).toMatchObject({ pembayaranBruto: '10000000.00', kasDiterima: '10850000.00', ppnTitipan: '1100000.00' });
   });
 
   it('PM tidak boleh mengubah termin klien', async () => {

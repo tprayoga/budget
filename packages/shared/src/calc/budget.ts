@@ -11,6 +11,8 @@ export interface BudgetLineInput {
 export interface ClusterCalcInput {
   nilaiPoImpl: Num;
   nilaiPoPermit?: Num | null;
+  /** Σ PO kind PERMIT saja (tanpa SND) — dasar margin permit. Default = nilaiPoPermit. */
+  permitPoAmount?: Num | null;
   permitCost?: Num | null;
   pajakRate: Num;
   retensiRate: Num;
@@ -47,12 +49,13 @@ export interface ClusterCalcResult {
   outflow: CalcItem;
   profit: D;
   margin: D;
-  /** Margin permit = nilaiPoPermit − permitCost − pajak atas permit − interest atas permitCost (indikator, tidak mengubah rumus). */
+  /** Margin permit = PO PERMIT − permitCost − pajak atas PO PERMIT − interest atas permitCost (indikator; SND tidak termasuk). */
   marginPermit: D;
 }
 
 /**
- * Margin permit (indikator Fase 2.3): nilaiPoPermit − permitCost − pajakRate × nilaiPoPermit − interestRate × permitCost.
+ * Margin permit (indikator): PO PERMIT − permitCost − pajakRate × PO PERMIT − interestRate × permitCost.
+ * Fase 2.4: hanya PO kind PERMIT — SND tetap masuk nilaiProyek tetapi tidak dihitung di margin permit.
  * Permit tetap masuk dasar pajak & interest di rumus utama; indikator ini menunjukkan apakah permit (pass-through) rugi.
  */
 export function calcPermitMargin(input: { nilaiPoPermit?: Num | null; permitCost?: Num | null; pajakRate: Num; interestRate: Num }): D {
@@ -133,7 +136,12 @@ export function calcCluster(input: ClusterCalcInput): ClusterCalcResult {
     outflow: { amount: outflowAmount, pct: safeDiv(outflowAmount, nilaiProyek) },
     profit,
     margin: safeDiv(profit, nilaiProyek),
-    marginPermit: calcPermitMargin({ nilaiPoPermit, permitCost: permitAmount, pajakRate, interestRate }),
+    marginPermit: calcPermitMargin({
+      nilaiPoPermit: input.permitPoAmount === undefined || input.permitPoAmount === null ? nilaiPoPermit : input.permitPoAmount,
+      permitCost: permitAmount,
+      pajakRate,
+      interestRate,
+    }),
   };
 }
 

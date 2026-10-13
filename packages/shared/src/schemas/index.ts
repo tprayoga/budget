@@ -77,6 +77,8 @@ export const clusterBaseSchema = z.object({
   projectId: z.string().min(1),
   name: z.string().trim().min(2).max(200),
   info: z.string().trim().max(500).nullish(),
+  /** Catatan cluster (keputusan / konfirmasi) */
+  note: z.string().trim().max(1000).nullish(),
   division: z.enum(DIVISIONS).nullish(),
   status: z.enum(CLUSTER_STATUSES).default('PLAN'),
   nilaiPoImpl: zNonNegDecimal,
@@ -109,6 +111,9 @@ export const settingSchema = z.object({
   rekeningNama: z.string().trim().max(120).nullish(),
   realisasiWarnPct: zRate.refine((v) => Number(v) > 0 && Number(v) <= 1, { message: 'Antara 0 dan 100%' }).nullish(),
   realisasiOverPct: zRate.refine((v) => Number(v) > 0 && Number(v) <= 5, { message: 'Antara 0 dan 500%' }).nullish(),
+  ppnRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).nullish(),
+  /** Alasan perubahan (dicatat di audit). */
+  reason: z.string().trim().max(300).nullish(),
 });
 export type SettingInput = z.infer<typeof settingSchema>;
 /** Setting global: interestRate & retensiAsCost tidak boleh null. */
@@ -244,6 +249,8 @@ export const clientPaymentUpdateSchema = z.object({
   dueDate: zDate.nullish(),
   paidDate: zDate.nullish(),
   paidAmount: zNonNegDecimal.nullish(),
+  ppnRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).optional(),
+  pphRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).optional(),
   status: z.enum(CLIENT_PAYMENT_STATUSES).optional(),
 });
 export type ClientPaymentUpdateInput = z.infer<typeof clientPaymentUpdateSchema>;
@@ -364,6 +371,16 @@ export const clusterPoUpdateSchema = z.object({
 export type ClusterPoUpdateInput = z.infer<typeof clusterPoUpdateSchema>;
 
 /** Terapkan referensi tagihan RAB ke termin: bruto diisi FINANCE; paidAmount = nilai net referensi. */
+export const applyMatchedRefsSchema = z.object({
+  /** Tanggal diterima untuk referensi Paid tanpa jatuh tempo (opsional — boleh kosong, ditandai perlu dilengkapi). */
+  paidDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullish(),
+  refIds: z.array(z.string()).optional(),
+});
+export type ApplyMatchedRefsInput = z.infer<typeof applyMatchedRefsSchema>;
+
 export const applyInvoiceRefSchema = z.object({
   refId: z.string().min(1),
   amount: zNonNegDecimal.refine((v) => Number(v) > 0, { message: 'Bruto harus > 0' }),
