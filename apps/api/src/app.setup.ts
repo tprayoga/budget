@@ -9,7 +9,7 @@ export function setupApp(app: INestApplication) {
   // foto nota base64 dari webhook bisa beberapa MB
   (app as NestExpressApplication).useBodyParser('json', { limit: '12mb' });
   // di belakang nginx: pakai X-Forwarded-For untuk IP klien (rate limit login)
-  (app as NestExpressApplication).set('trust proxy', 1);
+  (app as NestExpressApplication).set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
   app.setGlobalPrefix('api');
   app.enableCors({
     origin: (process.env.CORS_ORIGIN ?? 'http://localhost:5173').split(','),

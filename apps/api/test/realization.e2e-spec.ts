@@ -200,7 +200,8 @@ describe('Import RAB (dry-run → keputusan manual → commit)', () => {
 
   it('PM tidak boleh import realisasi', async () => {
     const { srv, auth } = ctx.api('pm').raw();
-    await srv.post('/api/import/rab-xlsx').set(auth).attach('file', readFileSync(RAB), 'RAB.xlsx').expect(403);
+    // file kecil: guard menolak sebelum body selesai dikirim (hindari EPIPE pada upload besar)
+    await srv.post('/api/import/rab-xlsx').set(auth).attach('file', Buffer.from('x'), 'RAB.xlsx').expect(403);
   });
 });
 

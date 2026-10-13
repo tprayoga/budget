@@ -172,7 +172,7 @@ describe('Import & export Excel', () => {
     await srv
       .post('/api/import/budget-xlsx')
       .set(ctx.api('finance').raw().auth)
-      .attach('file', readFileSync(SAMPLE), 'b.xlsx')
+      .attach('file', Buffer.from('x'), 'b.xlsx')
       .expect(403);
   });
 

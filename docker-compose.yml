@@ -35,6 +35,8 @@ services:
       CORS_ORIGIN: http://localhost:8080
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       SEED_PASSWORD: ${SEED_PASSWORD:-Indotek123!}
+      # jumlah proxy di depan API: 1 = nginx (web); 2 = caddy → nginx (profile https)
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       TZ: Asia/Jakarta
     ports:
       - '3000:3000'
@@ -50,5 +52,21 @@ services:
     ports:
       - '8080:80'
 
+  # Opsional: HTTPS untuk uji dari HP via LAN tanpa mematikan cookie Secure.
+  #   LAN_HOST=192.168.1.20 TRUST_PROXY_HOPS=2 docker compose --profile https up -d
+  caddy:
+    image: caddy:2.8-alpine
+    profiles: ['https']
+    depends_on:
+      - web
+    environment:
+      LAN_HOST: ${LAN_HOST:-localhost}
+    ports:
+      - '8443:8443'
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+
 volumes:
   pgdata:
+  caddy_data:

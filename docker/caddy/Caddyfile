@@ -1,0 +1,13 @@
+# HTTPS untuk uji dari HP lewat LAN (profile "https"). TLS internal: Caddy membuat CA lokal sendiri.
+# LAN_HOST = IP/hostname laptop di jaringan lokal, mis. 192.168.1.20
+{
+	local_certs
+	skip_install_trust
+}
+
+https://{$LAN_HOST:localhost}:8443, https://localhost:8443 {
+	tls internal
+	reverse_proxy web:80 {
+		header_up X-Forwarded-Proto https
+	}
+}

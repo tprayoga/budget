@@ -1,5 +1,123 @@
 # Changelog
 
+## Fase 2 — Realisasi biaya vs budget (14 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared (Vitest), termasuk acceptance G–M dan parser RAB pada file sanitasi | 107 lulus |
+| Test API (Jest + PostgreSQL), termasuk import RAB → realisasi, alokasi, PAJAK otomatis, webhook, tautan pengajuan, rekonsiliasi, RBAC | 66 lulus (+28) |
+| Test web (Vitest) | 9 lulus |
+| Playwright e2e (Fase 1 + Fase 2, desktop & HP) | 11 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| `docker compose up --build`, termasuk profile `https` (Caddy TLS internal) | berjalan |
+
+### Keputusan yang diterapkan
+
+1. **Mapping kategori → pos:**
+   - SUBCON_JASA, SUBCON_MATERIAL, MATERIAL_PEMBELIAN → SUBCON; PERMIT → PERMIT; **OPS → OPS_KANTOR**; PJD → ALLOWANCE; TICKET/HOMEBASE/MOTOR_MOBIL → pos bernama sama; kategori baru **PAJAK → PAJAK**; LAINNYA dipilih manual.
+   - Mapping disimpan di DB dan bisa diubah ADMIN.
+2. **Status input:** input PM (termasuk input cepat HP) dan kiriman webhook = PERLU_VERIFIKASI. Input FINANCE/ADMIN langsung TERVERIFIKASI. Verifikasi/tolak hanya oleh FINANCE.
+3. **Alokasi:** `PRO_RATA_PO` memakai bobot nilaiPoImpl (tanpa permit). Item import RAB level project diusulkan EQUAL.
+4. **Gempol:**
+   - Kategori mengikuti label item ("Term 1 Material" → SUBCON_MATERIAL), dengan peringatan "label ≠ formula total".
+   - Label ambigu ("Term 1 Jasa & Material 30%" di Wingkoharjo) mengikuti formula total, juga dengan peringatan.
+   - Item OPS/PJD yang labelnya bertentangan dengan section masuk daftar manual.
+5. **ClientPayment** menyimpan nilai bruto (`amount`) dan nilai diterima (`paidAmount`).
+   - Status PAID dengan paidAmount < amount → expense PAJAK otomatis (TERVERIFIKASI, source CLIENT_PAYMENT, sourceRef = id payment). Expense ini terkunci dari edit/hapus manual dan ikut berubah atau terhapus saat pembayaran diedit.
+   - Profit realisasi = Σ bruto termin PAID − Σ realisasi terverifikasi.
+   - "Kas diterima" ditampilkan terpisah.
+6. **Hari kerja:** Senin–Jumat + tabel `HariLibur` (CRUD oleh ADMIN, seed kosong). Jatuh tempo hari kerja melewati hari libur.
+7. **Template termin:** ADW 80/10/10 tanpa aging. CCSI tanpa template (termin manual).
+8. **Buku kas:** hanya referensi. Ada halaman rekonsiliasi per project per bulan (Σ cash out vs Σ expense terverifikasi + selisih, tanpa auto-match).
+
+### Yang dibuat
+
+**Kalkulasi & parser (`packages/shared`)**
+
+- **`allocateGroup` / `allocate`:** EQUAL, PRO_RATA_PO, MANUAL.
+  - Pembulatan dilakukan secara **kumulatif**: 12 item OPS yang dialokasikan per item tetap menghasilkan 3.578.533,33 / ,33 / ,34 per cluster, dan setiap item tetap utuh.
+- **Kalkulasi lain:** `calcRealization` (level kuning/merah dari `Setting.realisasiWarnPct`), `calcRealizedProfit`, `paymentDeduction`, `calcFundUsage`, `generateTermins` (sisa pembulatan ke termin terakhir), `calcDueDate` / `addWorkingDays`.
+- **Parser RAB (`@indotek/shared/xlsx`):**
+  - Mencari sel "Total Jasa / Material / Permit / Total / Total Lain-lain", lalu **mengikuti referensi formulanya**, termasuk shared formula dan total bertingkat (`=D54` → D53).
+  - Membaca section "Biaya OPS", "Biaya PJD", dan daftar "Keterangan".
+  - Membaca tagihan klien ("Term N - I2628-…", "INV-…").
+  - Membaca buku kas TELCO - OPS dari nilai cache IMPORTRANGE.
+  - **Verifikasi kelengkapan:** ke-71 total di sheet ADW/EVANTAMA/CCSI sama persis dengan Σ item hasil parse.
+- **Skema Zod** expense, termin, template, webhook, dan keputusan import.
+
+**Model data (migrasi `phase2_realisasi`)**
+
+- `Expense` (status, source, `sourceRef` untuk idempotensi, alokasi, tautan ke `FundRequest`, foto nota), `ExpenseAllocation`, `CategoryMapping`.
+- `TerminTemplate` + `TerminTemplateLine`, `ClientPayment`, `HariLibur`.
+- `CashLedger`, `ApiKey`, `ImportMappingRule`, dan `Setting.realisasiWarnPct`.
+- Seed (insert-only) mengisi mapping default, template termin, ambang 80%, dan backfill termin untuk 36 cluster (108 termin).
+
+**API**
+
+- **Expense:**
+  - `/expenses`: CRUD, menerima JSON atau multipart dengan foto.
+  - Verifikasi/tolak oleh FINANCE. PM yang mengubah expense DITOLAK → kembali menunggu verifikasi.
+  - Tautan ke pengajuan, dengan syarat pengajuan **DICAIRKAN** dan cluster-nya termasuk alokasi.
+  - Endpoint `pending-count` untuk badge Finance.
+- **Realisasi:** `GET /clusters/:id/realization`, `/projects/:id/realization`, `/projects/:id/reconciliation`. Rekap kini memuat ringkasan realisasi per cluster.
+- **Termin klien:**
+  - Termin dibuat otomatis saat cluster dibuat.
+  - Endpoint: `PATCH /client-payments/:id` (jatuh tempo otomatis + sinkron PAJAK), termin manual, dan `generate?recalculate=true` (hitung ulang termin UNBILLED).
+  - Hapus cluster ditolak bila sudah ada realisasi atau tagihan.
+- **Pengaturan:** `category-mappings`, `termin-templates`, `holidays` (ADMIN). Semua tercatat di AuditLog.
+- **Pengajuan dana:**
+  - `GET /fund-requests/:id/realization` (dana cair vs realisasi vs sisa di tangan) dan `/realization-report.pdf`.
+  - `POST /fund-requests/:id/attachments/previous-report`: membuat lampiran "Laporan realisasi termin sebelumnya" otomatis dari pengajuan DICAIRKAN terakhir di cluster yang sama.
+- **Webhook:**
+  - `POST /webhooks/expenses`, dengan `X-API-Key` tersimpan sebagai hash (SHA-256) dan ditampilkan sekali saat dibuat.
+  - Rate limit 60/menit per key. Idempoten lewat `externalId`.
+  - Foto via multipart atau base64 (dicek signature JPEG/PNG/WebP); tidak mengambil foto dari URL.
+  - Cluster harus id atau nama persis (bila ambigu: 422 + daftar kandidat). Hasil selalu PERLU_VERIFIKASI.
+- **Import:**
+  - `POST /import/rab-xlsx?mode=dry-run|commit`: status NEW/CHANGED/UNCHANGED/NEEDS_MAPPING/SKIPPED, peringatan, total sheet, dan tagihan klien.
+  - Keputusan per grup/blok, atau per item dengan `scope: INHERIT` (hanya kategori), disimpan sebagai aturan.
+  - Expense hasil import langsung TERVERIFIKASI.
+  - `POST /import/cash-ledger-xlsx` bersifat idempotent (hash per baris). `GET /import/cash-ledger`.
+
+**Web**
+
+- **Cluster:** tab **Budget | Realisasi | Termin Klien**.
+  - Realisasi: kartu pembayaran bruto / kas diterima / realisasi / profit realisasi / menunggu verifikasi, tabel per pos (kuning > ambang, merah > 100%), dan daftar realisasi dengan porsi alokasi.
+  - Termin Klien: jadwal, edit invoice/bayar, jatuh tempo, penanda terlambat, preview potongan PAJAK, dan termin manual.
+- **Realisasi:** daftar + filter. Finance langsung melihat antrean "Perlu verifikasi" (badge di menu). Form lengkap mencakup alokasi project-level rata / pro-rata / manual dan foto nota yang dikompres.
+- **Input cepat HP (`/realisasi/cepat`):** cluster (cari + terakhir dipakai), kategori sebagai tombol besar, nominal, tanggal, dan foto kamera yang dikompres ke JPEG ±1600 px. Tidak ada scroll horizontal (dicek di e2e).
+- **Detail pengajuan:** panel dana cair vs realisasi vs sisa dana di tangan + unduh laporan PDF. Wizard termin ≥ 2 mendapat tombol "Generate laporan realisasi".
+- **Import:** tab Budget | RAB Realisasi | Buku Kas, dengan form pemetaan manual per grup (tujuan cluster / project + metode, "Pakai usulan") dan kategori per item.
+- **Halaman lain:** Buku Kas & Rekonsiliasi. Pengaturan: ambang kuning, mapping kategori, template termin, hari libur, API key. Rekap: kolom Realisasi & Profit realisasi.
+- **Docker:** service **Caddy** opsional (`--profile https`, TLS internal, port 8443) untuk uji dari HP lewat LAN tanpa mematikan cookie Secure. `TRUST_PROXY_HOPS` bisa diatur.
+
+### Asumsi
+
+1. **Tanggal item OPS dari periode:** "Juli Week 2" disimpan sebagai tanggal 1 bulan itu + label periode, dengan peringatan. Item tanpa tanggal di sheet (mis. "Material Sinagar") disimpan tanpa tanggal dan masuk baris "Tanpa tanggal" di rekonsiliasi.
+2. **Tagihan klien di file RAB hanya ditampilkan sebagai referensi**, tidak diterapkan otomatis ke ClientPayment. Nilai di sheet adalah nilai bersih setelah PPh dan dipisah per PO cluster/subfeeder, sehingga tidak cocok 1:1 dengan termin template. Input dilakukan di tab Termin Klien.
+3. **Expense hasil import RAB** langsung TERVERIFIKASI (diverifikasi oleh user yang mengimpor; import hanya untuk ADMIN/FINANCE).
+4. **Kategori webhook** harus kode atau label persis, tanpa pencocokan fuzzy. LAINNYA ditolak karena tidak punya pos default.
+5. **Expense PAJAK otomatis** bertanggal sama dengan tanggal bayar dan dialokasikan 100% ke cluster termin.
+6. **Template termin diubah:** termin yang sudah ada tidak ikut berubah. Hitung ulang termin UNBILLED tersedia lewat API `generate?recalculate=true` (belum ada tombolnya di UI).
+7. **Profit realisasi** cluster yang belum menerima pembayaran bernilai negatif (biaya sudah keluar, pembayaran belum masuk). Ini sesuai rumus, bukan galat.
+8. **Buku kas:** baris dengan label project yang bukan project sistem (RPJ, IKR, OPS FTTH, OPS BTS, PAYROLL BTS) disimpan dengan label aslinya tanpa project, sehingga tidak masuk rekonsiliasi per project.
+
+### Yang perlu direview
+
+- [ ] **Pemetaan manual hasil preview file contoh:**
+  - "CCSI - Site Manado" (Total Jasa 36.920.416): di test dibagi rata ke 2 cluster Manado. Mohon konfirmasi apakah rata atau pro-rata.
+  - Daftar CCSI "Keterangan" (tiket, HB, sewa motor, kasbon, OPS) perlu dipilih kategori dan cluster-nya. Kasbon tidak punya usulan kategori.
+  - EVANTAMA sel E144:G148 berisi ringkasan PJD yang duplikat dengan daftar PJD. Sebaiknya di-**Lewati**.
+  - ADW baris 78–81 (pembelian material Ngawi/Wonosobo) belum jelas cluster-nya.
+  - ADW "Biaya OPS" berisi item PJD/Allowance (masuk daftar manual sesuai keputusan).
+- [ ] **Pembulatan alokasi kumulatif dalam satu grup import:** porsi per item bisa berbeda ±0,01 dari pembagian item tunggal, tetapi total per cluster selalu cocok dengan Excel. Mohon dicek apakah dapat diterima oleh Finance.
+- [ ] **Rate limit webhook & login masih di memori proses**, sehingga perlu Redis bila API dijalankan lebih dari satu instance.
+- [ ] **Sertifikat Caddy:** dibuat oleh CA internal, sehingga HP akan menampilkan peringatan kecuali root CA dipasang (lihat README). Untuk production gunakan domain + sertifikat publik.
+- [ ] **UI belum ada untuk:** hitung ulang termin saat nilai PO berubah, alokasi MANUAL pada import RAB, dan pemetaan baris buku kas ke project non-sistem.
+- [ ] **Data realisasi di DB dev/Docker lokal masih kosong.** Import file RAB lewat menu Import → RAB Realisasi bila ingin mencoba dengan data contoh.
+
 ## Fase 1.1 — Hardening (13 Oktober 2026)
 
 ### Status verifikasi

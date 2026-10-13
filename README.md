@@ -7,7 +7,7 @@ Sistem pengganti Excel manual PT Indotek Buana Karya untuk:
 3. realisasi biaya vs budget (fase berikutnya),
 4. dashboard & laporan.
 
-Status: **Fase 1** — fondasi, Budget per Cluster, dan Form Pengajuan Dana. Lihat [docs/CHANGELOG.md](docs/CHANGELOG.md).
+Status: **Fase 2** — realisasi biaya vs budget (di atas Fase 1: budget per cluster & pengajuan dana). Lihat [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 | Bagian | Teknologi |
 |---|---|
@@ -51,6 +51,47 @@ User demo hanya dibuat bila `NODE_ENV` bukan `production`. Di production, seed h
 | FINANCE | finance@indotek.test | Periksa pengajuan, tandai dicairkan |
 | DIREKTUR | direktur@indotek.test | Setujui pengajuan; ubah setting khusus project |
 | INVESTOR | investor@indotek.test | Hanya project **ADW** (untuk menguji pembatasan akses) |
+
+## Uji dari HP lewat LAN (HTTPS)
+
+Cookie sesi bertanda `Secure`, jadi akses dari HP lewat IP LAN butuh HTTPS. Untuk itu tersedia service Caddy opsional dengan TLS internal:
+
+```bash
+LAN_HOST=192.168.1.20 TRUST_PROXY_HOPS=2 docker compose --profile https up -d --build
+# buka https://192.168.1.20:8443 di HP (satu jaringan Wi-Fi dengan laptop)
+```
+
+- **`LAN_HOST`:** IP laptop di jaringan lokal (cek dengan `ipconfig getifaddr en0` di macOS).
+- **`TRUST_PROXY_HOPS=2`:** wajib di-set karena request melewati Caddy lalu nginx, agar IP klien untuk rate limit login terbaca benar.
+- **Peringatan sertifikat di HP:** sertifikat dibuat oleh CA lokal Caddy, jadi HP akan menampilkan peringatan. Pilihan:
+  - lanjutkan saja (khusus pengujian), atau
+  - pasang root CA di HP. File-nya ada di volume `caddy_data`, diambil dengan `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`.
+- **Tanpa profile `https`:** stack biasa tetap jalan di `http://localhost:8080`.
+
+## Realisasi (Fase 2)
+
+- **Pencatatan:** realisasi dicatat sebagai *expense* per cluster, atau level project yang dialokasikan ke beberapa cluster (rata / pro-rata nilai PO implementasi / manual).
+  - Angka per cluster selalu dibaca dari alokasi.
+  - Sisa pembulatan masuk ke cluster terakhir.
+- **Verifikasi:** hanya expense **terverifikasi** yang dihitung.
+  - Input PM (termasuk input cepat HP) dan kiriman bot berstatus "Perlu verifikasi" sampai diverifikasi FINANCE.
+  - Input FINANCE/ADMIN langsung terverifikasi.
+- **Termin klien:**
+  - Dibuat otomatis dari template client: ADW 80/10/10; Evantama implementasi 20/30/40/10 (30 hari kalender) dan permit 50/50 (14 hari kerja). CCSI masih diinput manual.
+  - Jatuh tempo hari kerja melewati Sabtu, Minggu, dan tabel Hari Libur.
+  - Bila nominal diterima < bruto, selisihnya otomatis menjadi expense PAJAK.
+- **Import Excel** (menu Import → RAB Realisasi / Buku Kas): dry-run → preview → keputusan pemetaan manual (diingat untuk import berikutnya) → commit. Buku kas hanya untuk referensi dan rekonsiliasi.
+- **Webhook bot (Telegram/n8n):** `POST /api/webhooks/expenses` dengan header `X-API-Key` (dibuat ADMIN di Pengaturan → API key).
+
+```bash
+curl -X POST https://<host>/api/webhooks/expenses \
+  -H "X-API-Key: ibk_xxxx_..." -H "Content-Type: application/json" \
+  -d '{"cluster":"Gempol Cirebon","kategori":"OPS","nominal":150000,"tanggal":"2026-10-14",
+       "keterangan":"Makan tim","externalId":"tg-123","fotoBase64":"data:image/jpeg;base64,..."}'
+# atau multipart: field yang sama + file "foto"
+```
+
+`kategori` boleh berupa kode (`OPS`, `PJD`, `TICKET`, `HOMEBASE`, `MOTOR_MOBIL`, `MATERIAL_PEMBELIAN`, `PERMIT`, `SUBCON_JASA`, …) atau labelnya. `cluster` boleh berupa id atau nama persis. Kiriman ulang dengan `externalId` yang sama tidak membuat data dobel.
 
 ## Keamanan sesi
 
@@ -111,6 +152,14 @@ docs/            ACCEPTANCE.md (angka acuan), CHANGELOG.md, samples/, screenshot
 | Rekap | Grid project |
 |---|---|
 | ![Rekap](docs/screenshots/rekap.png) | ![Grid project](docs/screenshots/project-grid.png) |
+
+| Realisasi cluster | Termin klien |
+|---|---|
+| ![Realisasi](docs/screenshots/cluster-realisasi.png) | ![Termin](docs/screenshots/termin-klien.png) |
+
+| Import RAB (pemetaan manual) | Input cepat di HP |
+|---|---|
+| ![Import RAB](docs/screenshots/import-rab.png) | ![Input cepat](docs/screenshots/mobile-input-cepat.png) |
 
 | Wizard — % cair per pos | Detail pengajuan (sudah dicairkan) |
 |---|---|

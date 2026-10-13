@@ -47,8 +47,11 @@ interface Preview {
   sheets: { sheetName: string; projectCode: string; error: string | null; totals: { cell: string; label: string; blockTitle: string | null; value: string }[]; invoices: { key: string; blockTitle: string | null; termin: number | null; invoiceNo: string; amount: string | null; dueDate: string | null; statusText: string | null }[] }[];
   items: Item[];
   summary: Record<Status, number>;
-  created?: number;
-  updated?: number;
+}
+interface CommitResult {
+  created: number;
+  updated: number;
+  preview: Preview;
 }
 
 const STATUS_STYLE: Record<Status, string> = {
@@ -108,18 +111,18 @@ export function ImportRabTab() {
   const [filter, setFilter] = useState<Status | ''>('');
   const [result, setResult] = useState<string | null>(null);
 
-  const send = (mode: 'dry-run' | 'commit') => {
+  const send = <T,>(mode: 'dry-run' | 'commit') => {
     const fd = new FormData();
     fd.set('file', file!);
     if (mode === 'commit') fd.set('decisions', JSON.stringify(decisions));
-    return api<Preview>(`/import/rab-xlsx?mode=${mode}`, { method: 'POST', body: fd });
+    return api<T>(`/import/rab-xlsx?mode=${mode}`, { method: 'POST', body: fd });
   };
-  const dry = useMutation({ mutationFn: () => send('dry-run'), onSuccess: (p) => { setPreview(p); setResult(null); setDecisions({}); } });
+  const dry = useMutation({ mutationFn: () => send<Preview>('dry-run'), onSuccess: (p) => { setPreview(p); setResult(null); setDecisions({}); } });
   const commit = useMutation({
-    mutationFn: () => send('commit'),
-    onSuccess: async (p) => {
-      setResult(`Import selesai: ${p.created} realisasi baru, ${p.updated} diperbarui.`);
-      setPreview(p);
+    mutationFn: () => send<CommitResult>('commit'),
+    onSuccess: async (r) => {
+      setResult(`Import selesai: ${r.created} realisasi baru, ${r.updated} diperbarui.`);
+      setPreview(r.preview);
       setDecisions({});
       await qc.invalidateQueries();
     },
