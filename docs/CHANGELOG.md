@@ -1,5 +1,108 @@
 # Changelog
 
+## Fase 2.3 — PO per cluster, margin permit, retensi = piutang, proteksi import, notifikasi (14 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 123 lulus (baru: PO turunan, margin permit, acuan default 961.865,20, penyesuaian PO ADW) |
+| Test API (Jest + PostgreSQL) | 87 lulus (baru: `phase23.e2e-spec.ts`) |
+| Test web | 9 lulus |
+| Playwright e2e | 14 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| DB Docker | patch 2.3 terpasang; import RAB ulang 0 baru / 0 berubah; 8 PO penyesuaian ADW; **item ditahan = 0** |
+
+### Keputusan yang diterapkan
+
+Patch data sekali jalan **`2.3-po-permit-semarang-fee-marketing`** (DataPatch, dipanggil dari seed, semua perubahan diaudit). Angka acuan di ACCEPTANCE bagian P.
+
+1. **Margin permit** per cluster = nilaiPoPermit − permitCost − pajak atas permit − interest atas permitCost. Tampil di ringkasan cluster, grid project, dan kolom Rekap (merah bila negatif). Rumus pajak/interest utama tidak berubah.
+2. **Permit Semarang** → diganti keputusan 9 (lihat bawah).
+3. **Model `ClusterPo`** (IMPLEMENTASI / PERMIT / SND / ADDWORK / DEDUCTION, no. & tanggal PO, nilai, biaya pass-through, catatan).
+   - nilaiPoImpl, nilaiPoPermit, permitCost sekarang **diturunkan** dari PO dan read-only di form/grid (PATCH langsung → 400).
+   - Migrasi: setiap cluster mendapat PO IMPLEMENTASI (+ PERMIT bila ada) dari nilai lama; nomor PO diambil dari info cluster; termin lama dikaitkan ke PO-nya.
+   - SND Kalawiran: PO SND FTTHSWI-5-280926 Rp 4.373.496 (pass-through 0), termin SND 1 × 100% Unpaid (Ditagih, INV-RAA/003/IX/2026). Item ditahan → RELEASED.
+   - ADW "Deduction Termin 1 + Addwork": import dry-run → commit, 8 PO (tanda dari rumus baris total).
+   - Termin klien digenerate **per PO**: IMPLEMENTASI/PERMIT dari template client; SND/ADDWORK/DEDUCTION 1 × 100% manual.
+4. **Tanggal invoice tidak pernah ditebak.** Termin yang sudah ditagih / punya no. invoice / manual tanpa tanggal mendapat badge "tanggal invoice belum diisi" di tab Termin Klien. Termin tersebut juga dihitung di inbox FINANCE (badge kuning + daftar).
+5. **Default resmi `retensiAsCost = false`** di seed dan `GLOBAL_DEFAULTS` (instalasi baru). Acuan A–F tetap dites dengan `true` eksplisit. Acuan baru: WANASARI RW 01 profit **961.865,20**.
+6. **Referensi tagihan RAB** disimpan saat import RAB dan tampil di tab Termin Klien. Tombol **"Terapkan ke termin…"**: FINANCE memilih termin dan mengisi bruto; paidAmount = net referensi; potongan otomatis menjadi expense PAJAK. Tidak ada penerapan otomatis.
+7. **Proteksi import budget.**
+   - Field cluster/baris budget yang diedit di aplikasi (termasuk lewat tabel PO) ditandai `FieldOverride` (siapa/kapan).
+   - Import Excel melewati field tersebut. Preview menampilkannya sebagai "dilindungi — diedit di aplikasi" (status cluster **Dilindungi**).
+   - Field bisa ditimpa per field lewat checkbox, khusus ADMIN, dengan alasan wajib (tercatat di audit; tanda dilepas).
+8. **Over budget.**
+   - Notifikasi in-app untuk PM & DIREKTUR saat pos/cluster melewati `Setting.realisasiOverPct` (default 100%).
+   - Satu notifikasi per pos; dilepas bila kembali di bawah ambang.
+   - Lonceng notifikasi di header; daftar "Cluster over budget" di Rekap.
+9. **Permit Semarang pass-through.**
+   - PO PERMIT Rp 36.000.000, pass-through Rp 36.000.000, catatan "konfirmasi user 14 Okt 2026".
+   - J31 dilepas → realisasi PERMIT 100% Padangsari.
+   - Termin permit manual 1 × 100% UNBILLED, tanggal invoice kosong (badge).
+10. **CCSI C58 "Wenda Manado Sulut" Rp 4.000.000 = fee marketing.**
+    - Kategori baru **MARKETING_FEE** → pos MARKETING (CategoryMapping).
+    - Dialokasikan PRO_RATA_PO ke Kalawiran & Karondoran, catatan "fee marketing — konfirmasi user 14 Okt 2026".
+
+### Yang dibuat
+
+- **Migrasi `20261014090000_phase23_po_override_notif`:**
+  - enum PoKind; TerminKind + SND/ADDWORK/DEDUCTION; ExpenseCategory + MARKETING_FEE.
+  - Tabel ClusterPo, FieldOverride, Notification, ClientInvoiceRef.
+  - ClientPayment.poId/fromTemplate; unique `[poId, termin]`; `Setting.realisasiOverPct`.
+- **Shared:** `derivePoTotals`, `poAmountError`, `parsePoNumbers`, `calcPermitMargin` (+ `marginPermit` di DTO/total), `parsePoAdjustments` (parser RAB), skema Zod PO & terapkan referensi.
+- **API:**
+  - `GET/POST /clusters/:id/pos`, `PATCH/DELETE /clusters/pos/:poId` (ADMIN/PM).
+  - `POST /client-payments/:id/apply-reference` (ADMIN/FINANCE).
+  - `POST /import/po-adjustments-xlsx` (dry-run/commit; ADMIN/PM).
+  - `POST /import/budget-xlsx` field `force` + `reason` (ADMIN).
+  - `GET /notifications`, `POST /notifications/:id/read`, `POST /notifications/read-all`, `GET /inbox/missing-invoice-dates`.
+  - Rekap: `overBudget`.
+- **Web:**
+  - Tabel PO di detail cluster.
+  - Tab Termin Klien dikelompokkan per PO, dengan badge, referensi RAB, dan dialog terapkan.
+  - Lonceng notifikasi, bagian inbox FINANCE, kolom margin permit & daftar over budget di Rekap.
+  - Status "Dilindungi" + checkbox Timpa di import budget, tab import **Penyesuaian PO**, dan ambang notifikasi di Pengaturan.
+- **Script** `scripts/import-rab.ts --po-adjustments`: preview + commit penyesuaian PO, tabel margin permit, daftar over budget, jumlah item ditahan.
+
+### Laporan Rekap ulang (DB Docker, default baru: retensi = piutang, interest 10%)
+
+| Project | Nilai proyek | Profit proyeksi | Margin | Pembayaran klien PAID (bruto) | Realisasi biaya | Profit realisasi | Margin permit |
+|---|---|---|---|---|---|---|---|
+| ADW | 712.513.400 | **67.702.754** | 9,50% | 0 | 375.453.286 | −375.453.286 | 0 |
+| EVANTAMA | 236.454.823 | **7.640.924** | 3,23% | 0 | 141.175.619 | −141.175.619 | **−6.451.500** |
+| CCSI | 198.835.655 | **10.332.449** | 5,20% | 0 | 128.413.698 | −128.413.698 | **−2.606.761** |
+
+- ADW turun dari 716.165.700 karena 8 PO penyesuaian (Σ −3.652.300). CCSI naik karena SND 4.373.496 dan permit Semarang 36.000.000.
+- Realisasi CCSI naik 40.000.000 (J31 permit Semarang 36.000.000 + C58 fee marketing 4.000.000).
+- Profit realisasi masih negatif karena belum ada termin klien berstatus Dibayar di DB.
+- Pembanding dengan retensiAsCost = true: ADW −10.673.720, EVANTAMA −12.759.106, CCSI −4.635.620.
+
+**Margin permit per cluster:**
+
+| Cluster | PO permit | Biaya permit | Margin permit |
+|---|---|---|---|
+| Sinagar Tasik | 37.000.000 | 37.000.000 | −4.680.500 |
+| Kersanagara RW 08 | 9.000.000 | 9.000.000 | −1.138.500 |
+| Kersanagara RW 04 | 5.000.000 | 5.000.000 | −632.500 |
+| Kalawiran (Manado) | 14.586.296 (permit + SND) | 10.035.446 | +3.182.648 |
+| Karondoran (Manado) | 12.176.000 | 11.964.554 | −1.289.409 |
+| **Padangsari RW 12 & 13 (Semarang)** | **36.000.000** | **36.000.000** | **−4.500.000** |
+
+**Jumlah item ditahan: 0.** Duplikat/dilewati tetap 6 (ADW C78/C79/C80, EVANTAMA G145/G147/G148), semuanya bisa dibatalkan.
+
+### Yang perlu direview
+
+1. **Setting retensi di DB Docker masih `true`.** Admin mengubahnya ke false pada 13 Okt 17:51 UTC, lalu kembali ke true pada 17:54 UTC. Default baru hanya berlaku untuk instalasi baru, dan setting yang dibuat user tidak saya ubah; laporan di atas memakai preview false. Perlu diubah ke false di Docker/produksi?
+2. **TEPAS RW 05 NGAWI-REV:** nilai PO implementasi cluster 33.655.100 (kolom Implementation), sedangkan kolom Realisasi sheet ADW 33.650.100. Setelah penyesuaian hasilnya 33.322.600 vs AL11 33.317.600 (selisih 5.000). PO dasar mana yang benar?
+3. **Termin ADDWORK/DEDUCTION ADW dibuat sebagai termin 1 × 100% terpisah** (8 termin, termasuk deduction bernilai negatif). Akibatnya inbox FINANCE berisi 12 termin tanpa tanggal invoice: 6 deduction, 2 addwork, 3 permit, 1 SND. Bila deduction seharusnya memotong termin 1 implementasi, perlu aturan lain.
+4. **Referensi tagihan RAB tidak cocok dengan termin template.** Contoh: Sinagar permit I2628-00139 net 20.044.750 > termin permit 1 bruto 18.500.000 (50% × 37 jt); Sinagar impl I2628-00142 net 18.425.090 vs termin 1 21.788.135. Belum ada yang diterapkan. 6 dari 12 referensi berlaku di tingkat project (blok RAB tidak cocok dengan satu cluster).
+5. **Notifikasi over budget awal: 31 pos → 62 notifikasi** (PM + DIREKTUR). Sebagian besar pos Allowance ADW (alokasi PJD per tanggal implementasi) dan pos kecil CCSI Manado (tiket, OPS, motor, marketing termasuk fee C58). Perlu ambang lain, atau notifikasi hanya untuk total cluster?
+6. **Margin permit Kalawiran positif (+3.182.648)** karena SND 4.373.496 ikut nilaiPoPermit dengan pass-through 0, sesuai rumus. Konfirmasi SND memang dihitung di margin permit.
+7. **Pembanding import budget** menerima nilai PO dasar (file asli) **atau** total turunan termasuk addwork/SND (file hasil export). Dengan begitu round-trip export → import tetap "Sama".
+8. **Redis ditunda ke fase deployment.** Rate limit login dan pemindaian over budget masih in-process (cocok untuk 1 instance API).
+9. Info pendukung di snapshot pengajuan (infoBunga/infoProfit) mengikuti setting efektif. Test FPD sekarang memakai default (770.816,80 / 961.865,20). Acuan A dengan retensi = biaya dites di kalkulasi budget.
+
 ## Fase 2.2 — Keputusan review import & penyelesaian pemetaan (14 Oktober 2026)
 
 ### Status verifikasi

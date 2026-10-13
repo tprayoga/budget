@@ -217,3 +217,61 @@ Dites di `apps/api/test/realization.e2e-spec.ts` dan `budget.e2e-spec.ts`.
 Total CCSI di rekap (acuan C + permit Manado), dengan interest 10% dan retensiAsCost = true:
 nilaiProyek 136.073.359 + 22.388.800 = **158.462.159**. Profit −1.871.953 − (22.000.000 + pajak 559.720 + interest
 2.255.972 − 22.388.800) = **−4.298.845**. Acuan C level parser (file Excel) tidak berubah.
+
+## P. Fase 2.3 — PO per cluster, margin permit, default retensi = piutang
+
+Dites di `packages/shared/src/calc/po.test.ts`, `packages/shared/test/acceptance-rab.test.ts`,
+`apps/api/test/{budget,realization,phase23}.e2e-spec.ts` dan `e2e/phase{1,2}.spec.ts`.
+
+**Default baru `retensiAsCost = false` (retensi = piutang).** Acuan A–F tetap dites dengan `retensiAsCost = true`
+eksplisit (shared: fixture; API: `?retensiAsCost=true`; e2e: preview toggle).
+
+| Acuan | Nilai |
+|---|---|
+| WANASARI RW 01, default (retensi = piutang) | danaInvestor 7.708.168 · interest 770.816,80 · **profit 961.865,20** |
+| WANASARI RW 01, retensiAsCost = true | profit −76.628,30 (acuan A tidak berubah) |
+
+**Nilai PO diturunkan dari tabel PO** (rumus budget tidak berubah):
+`nilaiPoImpl = Σ IMPLEMENTASI + ADDWORK + DEDUCTION`, `nilaiPoPermit = Σ PERMIT + SND`, `permitCost = Σ passThroughCost`.
+Contoh: IMPL 33.650.100 + ADDWORK 398.300 + DEDUCTION −730.800 = **33.317.600**; PERMIT 10.212.800 + SND 4.373.496 =
+**14.586.296**; pass-through 10.035.446,29. DEDUCTION > 0 atau jenis lain < 0 ditolak.
+
+**Margin permit** = nilaiPoPermit − permitCost − pajakRate × nilaiPoPermit − interestRate × permitCost
+
+| Cluster | PO permit | Biaya permit | Pajak | Interest | Margin permit |
+|---|---|---|---|---|---|
+| Sinagar (pajak 2,65%) | 37.000.000 | 37.000.000 | 980.500 | 3.700.000 | **−4.680.500** |
+| Padangsari Semarang (pajak 2,5%) | 36.000.000 | 36.000.000 | 900.000 | 3.600.000 | **−4.500.000** |
+| Tanpa permit | 0 | 0 | 0 | 0 | 0 |
+
+**Penyesuaian PO ADW** (baris 10 "Deduction Termin 1 + Addwork", kolom Realisasi). Tanda dari rumus baris 11;
+sel berumus konstanta dipecah per suku.
+
+| Sel | Isi | Rumus baris 11 | PO |
+|---|---|---|---|
+| M10 | −755.900 | `M9+M10` | DEDUCTION −755.900 |
+| Z10 | 1.058.900 | `Z9-Z10` | DEDUCTION −1.058.900 |
+| AD10 | −1.081.700 | `AD9+AD10` | DEDUCTION −1.081.700 |
+| AL10 | `=398300-730800` | `AL9+AL10` | ADDWORK 398.300 + DEDUCTION −730.800 |
+| AP10 | `=522700-736000` | `AP9+AP10` | ADDWORK 522.700 + DEDUCTION −736.000 |
+| BN10 | 210.000 | `BN9-BN10` | DEDUCTION −210.000 |
+| Σ | | | **−3.652.300** |
+
+**Total CCSI (retensiAsCost = true, interest 10%)** = acuan O + SND Kalawiran + permit Semarang:
+
+- nilaiProyek 158.462.159 + 4.373.496 + 36.000.000 = **198.835.655**
+- SND: profit + 4.373.496 × (1 − 2,5% − 10% × 2,5%) = +4.253.224,86
+- Semarang pass-through: profit −(pajak 900.000 + interest 10% × 36.900.000) = −4.590.000
+- profit −4.298.845 + 4.253.224,86 − 4.590.000 = **−4.635.620,14**
+
+**Keputusan 2.3 (patch `2.3-po-permit-semarang-fee-marketing`)**
+
+| Keputusan | Hasil yang dites |
+|---|---|
+| SND Kalawiran | PO SND FTTHSWI-5-280926 4.373.496, pass-through 0; termin SND 1 × 100% INVOICED (INV-RAA/003/IX/2026), tanggal invoice kosong → badge; item ditahan → RELEASED (`PO_SND`) |
+| Permit Semarang | PO PERMIT 36.000.000 / pass-through 36.000.000, catatan "konfirmasi user 14 Okt 2026"; J31 → realisasi PERMIT 36.000.000 ke Padangsari; termin permit UNBILLED, tanggal kosong → badge |
+| CCSI C58 "Wenda Manado Sulut" 4.000.000 | kategori MARKETING_FEE → pos MARKETING, PRO_RATA_PO Kalawiran & Karondoran, catatan "fee marketing — konfirmasi user 14 Okt 2026" |
+| Daftar ditahan | **0 item** setelah import |
+| Import budget (file contoh) | permit Manado & Semarang = **Dilindungi** (diedit di aplikasi); cluster lain Sama; timpa per field hanya ADMIN + alasan |
+| Over budget | realisasi TICKET 250.000 pada budget 0 → notifikasi PM & DIREKTUR sekali (kunci `OVER:{cluster}:{pos}`), muncul di Rekap; expense dihapus → notifikasi dilepas |
+| Referensi tagihan RAB | diterapkan manual: bruto 1.000.000, net 980.000 → PAID, potongan 20.000 jadi expense PAJAK; tidak bisa diterapkan dua kali |
