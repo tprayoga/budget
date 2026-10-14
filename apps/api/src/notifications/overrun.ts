@@ -1,6 +1,7 @@
 import type { FrCode, PrismaClient } from '@prisma/client';
 import { BUDGET_LABEL, calcCluster, dec, formatAngka, formatTanggal, frBudgetAmounts, FR_CODES, moneyStr, safeDiv, todayJakartaIso, type D } from '@indotek/shared';
 import type { Tx } from '../prisma/prisma.service';
+import { withLock } from '../redis/redis';
 import { clusterCalcInput } from '../budget/budget.mapper';
 
 type Db = PrismaClient | Tx;
@@ -100,6 +101,11 @@ const pctText = (v: string) => `${dec(v).times(100).toDecimalPlaces(1).toString(
  *    pos yang baru melewati ambang hari itu; pos baru berikutnya di hari yang sama ditambahkan ke ringkasan yang sama.
  */
 export async function scanOverruns(db: Db, clusterIds?: string[]) {
+  // satu pemindaian dalam satu waktu lintas replika API (lock Redis) agar notifikasi lintasan tidak ganda
+  return withLock('lock:overrun-scan', 60_000, () => scanOverrunsUnlocked(db, clusterIds));
+}
+
+async function scanOverrunsUnlocked(db: Db, clusterIds?: string[]) {
   const items = await computeOverruns(db, clusterIds);
   const scoped = clusterIds ?? (await db.cluster.findMany({ select: { id: true } })).map((c) => c.id);
   const states = await db.overrunState.findMany({ where: { clusterId: { in: scoped } } });

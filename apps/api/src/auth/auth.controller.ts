@@ -28,9 +28,9 @@ export class AuthController {
   @ApiZodBody(loginSchema)
   async login(@ZBody(loginSchema) body: LoginInput, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const ip = req.ip ?? 'unknown';
-    this.limiter.hit(ip, body.email);
+    await this.limiter.hit(ip, body.email);
     const { tokens, user } = await this.auth.login(body.email, body.password);
-    this.limiter.reset(ip, body.email);
+    await this.limiter.reset(ip, body.email);
     setAuthCookies(res, tokens);
     return { user };
   }

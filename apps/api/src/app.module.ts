@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { LoggerModule } from 'nestjs-pino';
+import { loggerParams } from './logging';
+import { RedisLifecycle } from './redis/redis.lifecycle';
 import { AccessModule } from './access/access.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -19,6 +22,7 @@ import { HealthController } from './health.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
+    LoggerModule.forRoot(loggerParams()),
     PrismaModule,
     StorageModule,
     AuditModule,
@@ -35,5 +39,6 @@ import { HealthController } from './health.controller';
     NotificationsModule,
   ],
   controllers: [HealthController],
+  providers: [RedisLifecycle],
 })
 export class AppModule {}

@@ -20,6 +20,7 @@ import { Public, SkipCsrf } from '../auth/decorators';
 import { ApiZodBody, ZBody } from '../common/zod';
 import { money } from '../common/decimal';
 import { MAX_UPLOAD_BYTES, StorageService, type UploadedFile } from '../storage/storage.service';
+import { WebhookRateGuard } from './webhook-rate.guard';
 import { ApiKeyGuard, type ApiKeyContext } from './api-keys';
 import { ExpenseSupportService } from './expense-support.service';
 import { flatExpense } from './expenses.service';
@@ -65,7 +66,7 @@ export class WebhookController {
 
   @Public()
   @SkipCsrf()
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(ApiKeyGuard, WebhookRateGuard)
   @Post('expenses')
   @HttpCode(201)
   @ApiHeader({ name: 'X-API-Key', required: true })

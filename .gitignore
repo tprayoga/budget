@@ -13,3 +13,9 @@ e2e/report
 .DS_Store
 # Data asli (berisi nama & rekening) — tidak boleh masuk repo
 private/
+apps/api/dist-scripts/
+.env.production
+backups/
+migrasi/
+akun-baru-*.csv
+.deploy/

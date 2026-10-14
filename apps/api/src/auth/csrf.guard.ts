@@ -2,14 +2,15 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import { timingSafeEqual } from 'node:crypto';
-import { CSRF_COOKIE, CSRF_HEADER } from './cookies';
+import { CSRF_COOKIE, CSRF_HEADER, verifyCsrfToken } from './cookies';
 import { SKIP_CSRF } from './decorators';
 
 const SAFE = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
- * Proteksi CSRF double-submit: setiap request yang mengubah data wajib membawa header X-CSRF-Token
- * yang sama dengan cookie csrf_token. Situs lain tidak bisa membaca cookie tersebut.
+ * Proteksi CSRF double-submit bertanda tangan: setiap request yang mengubah data wajib membawa header X-CSRF-Token
+ * yang sama dengan cookie csrf_token, dan token harus ditandatangani HMAC dengan COOKIE_SECRET (cookie yang
+ * disuntikkan dari subdomain lain tanpa secret ditolak). Situs lain tidak bisa membaca cookie tersebut.
  */
 @Injectable()
 export class CsrfGuard implements CanActivate {
@@ -24,7 +25,7 @@ export class CsrfGuard implements CanActivate {
     if (typeof cookie !== 'string' || typeof header !== 'string' || !cookie || cookie.length !== header.length) {
       throw new ForbiddenException({ message: 'Token CSRF tidak valid', code: 'CSRF' });
     }
-    if (!timingSafeEqual(Buffer.from(cookie), Buffer.from(header))) {
+    if (!timingSafeEqual(Buffer.from(cookie), Buffer.from(header)) || !verifyCsrfToken(cookie)) {
       throw new ForbiddenException({ message: 'Token CSRF tidak valid', code: 'CSRF' });
     }
     return true;

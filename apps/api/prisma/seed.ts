@@ -110,20 +110,23 @@ const USERS: { email: string; name: string; role: Role; jabatan: string; project
   { email: 'investor@indotek.test', name: 'Hendra Wijaya', role: 'INVESTOR', jabatan: 'Investor', projects: ['ADW'] },
 ];
 
-const SAMPLE = path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
+const SAMPLE = process.env.SAMPLE_BUDGET_XLSX ?? path.resolve(__dirname, '../../../docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx');
 
 /**
- * Production: tidak ada user demo. Admin awal dibuat dari INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD
- * (hanya bila belum ada ADMIN), dan wajib ganti password saat login pertama.
+ * Production: tidak ada user demo. Admin awal dibuat dari ADMIN_EMAIL / ADMIN_PASSWORD (alias lama:
+ * INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD) bila email tersebut belum ada — idempotent per email, sehingga tetap
+ * dibuat setelah migrasi data (akun demo yang dianonimkan tidak dihitung). Wajib ganti password saat login pertama.
  */
 async function ensureInitialAdmin() {
-  if (await prisma.user.count({ where: { role: 'ADMIN' } })) return;
-  const email = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase();
-  const pass = process.env.INITIAL_ADMIN_PASSWORD;
+  const email = (process.env.ADMIN_EMAIL ?? process.env.INITIAL_ADMIN_EMAIL)?.trim().toLowerCase();
+  const pass = process.env.ADMIN_PASSWORD ?? process.env.INITIAL_ADMIN_PASSWORD;
   if (!email || !pass) {
-    console.warn('Production: belum ada ADMIN. Set INITIAL_ADMIN_EMAIL & INITIAL_ADMIN_PASSWORD lalu jalankan seed.');
+    if (!(await prisma.user.count({ where: { role: 'ADMIN', active: true } }))) {
+      console.warn('Production: belum ada ADMIN aktif. Set ADMIN_EMAIL & ADMIN_PASSWORD lalu jalankan seed.');
+    }
     return;
   }
+  if (await prisma.user.findUnique({ where: { email } })) return;
   await prisma.user.create({
     data: { email, name: 'Administrator', role: 'ADMIN', passwordHash: await bcrypt.hash(pass, 10), mustChangePassword: true },
   });
@@ -212,7 +215,9 @@ async function main() {
   }
 
   const production = process.env.NODE_ENV === 'production';
-  if (!production) {
+  // ALLOW_DEMO_SEED=true hanya untuk stack prod UJI lokal (e2e terhadap image production) — tidak pernah di server
+  const demo = !production || process.env.ALLOW_DEMO_SEED === 'true';
+  if (demo) {
     // User demo hanya untuk non-production; semuanya wajib ganti password saat login pertama
     const passwordHash = await bcrypt.hash(password, 10);
     for (const u of USERS) {
@@ -234,9 +239,9 @@ async function main() {
     await ensureInitialAdmin();
   }
 
-  if (production && process.env.SEED_SAMPLE_CLUSTERS !== 'true') {
-    for (const c of await prisma.cluster.findMany({ select: { id: true } })) await generateClientPayments(prisma, c.id);
-    console.log('Seed selesai (production): master data saja; cluster contoh tidak diimpor.');
+  if (production && !demo && process.env.SEED_SAMPLE_CLUSTERS !== 'true') {
+    // termin tidak digenerate ulang di production: data hasil migrasi sudah lengkap (termasuk keputusan manual)
+    console.log('Seed selesai (production): master data & admin awal saja; cluster contoh tidak diimpor.');
     return;
   }
 

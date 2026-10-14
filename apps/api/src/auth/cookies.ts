@@ -1,4 +1,5 @@
 import type { CookieOptions, Response } from 'express';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const ACCESS_COOKIE = 'access_token';
 export const REFRESH_COOKIE = 'refresh_token';
@@ -32,4 +33,28 @@ export function clearAuthCookies(res: Response) {
   res.clearCookie(ACCESS_COOKIE, { ...base(), httpOnly: true, path: '/api' });
   res.clearCookie(REFRESH_COOKIE, { ...base(), httpOnly: true, path: '/api/auth' });
   res.clearCookie(CSRF_COOKIE, { ...base(), path: '/' });
+}
+
+/** Secret penandatangan token CSRF (COOKIE_SECRET). Wajib di production — dicek saat start (assertProductionConfig). */
+function cookieSecret(): string {
+  return process.env.COOKIE_SECRET || 'dev-cookie-secret-ganti-di-produksi';
+}
+
+function sign(nonce: string): string {
+  return createHmac('sha256', cookieSecret()).update(nonce).digest('base64url');
+}
+
+/** Token CSRF bertanda tangan: `{nonce}.{HMAC-SHA256(COOKIE_SECRET, nonce)}`. */
+export function createCsrfToken(): string {
+  const nonce = randomBytes(24).toString('base64url');
+  return `${nonce}.${sign(nonce)}`;
+}
+
+/** Token valid bila tanda tangan cocok (rotasi COOKIE_SECRET → semua token lama tidak valid, user login ulang). */
+export function verifyCsrfToken(token: string): boolean {
+  const i = token.lastIndexOf('.');
+  if (i <= 0) return false;
+  const expected = Buffer.from(sign(token.slice(0, i)));
+  const given = Buffer.from(token.slice(i + 1));
+  return expected.length === given.length && timingSafeEqual(expected, given);
 }

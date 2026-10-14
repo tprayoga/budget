@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'node:crypto';
+import { createCsrfToken } from './cookies';
 import type { Role } from '@indotek/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -99,6 +100,6 @@ export class AuthService {
     await this.prisma.refreshToken.create({
       data: { userId: user.id, tokenHash: hashToken(refreshToken), expiresAt: new Date(Date.now() + refreshTtlMs()) },
     });
-    return { accessToken, refreshToken, csrfToken: randomBytes(32).toString('base64url') };
+    return { accessToken, refreshToken, csrfToken: createCsrfToken() };
   }
 }
