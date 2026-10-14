@@ -559,6 +559,8 @@ model TerminTemplateLine {
   terminKe   Int
   pct        Decimal        @db.Decimal(16, 12)
   keterangan String?
+  /// Termin retensi: dicairkan N bulan setelah tanggal opname (mis. CCSI termin 4 = 3 bulan)
+  retentionMonths Int?
   template   TerminTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@unique([templateId, terminKe])
@@ -575,6 +577,12 @@ model ClientPayment {
   kind        TerminKind
   termin      Int
   pct         Decimal?            @db.Decimal(16, 12)
+  /// Termin retensi: jumlah bulan setelah tanggal opname (dari template)
+  retentionMonths Int?
+  /// Tanggal opname ditandatangani (input FINANCE) — dasar tanggal pelepasan retensi
+  opnameDate  DateTime?           @db.Date
+  /// = opnameDate + retentionMonths (dipakai proyeksi cash flow)
+  retentionReleaseDate DateTime?  @db.Date
   /// DPP (dasar pengenaan pajak) — pendapatan
   amount      Decimal             @db.Decimal(18, 2)
   /// PPN keluaran (titipan, bukan pendapatan/biaya) = DPP × ppnRate

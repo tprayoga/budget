@@ -395,6 +395,10 @@ export interface ClientPayment {
   invoiceTotal: string;
   expectedNet: string;
   keterangan: string | null;
+  /** Termin retensi: N bulan setelah tanggal opname */
+  retentionMonths?: number | null;
+  opnameDate?: string | null;
+  retentionReleaseDate?: string | null;
   invoiceNo: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -417,7 +421,7 @@ export interface ClientInvoiceRef {
   paid: boolean;
   appliedPaymentId: string | null;
   appliedAt: string | null;
-  suggestion: { mode: 'NET' | 'DPP'; perluKonfirmasiPajak: boolean; paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
+  suggestion: { mode: 'NET' | 'DPP'; basis?: 'NET_PAID' | 'INVOICE' | 'DPP'; perluKonfirmasiPajak: boolean; paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
   ambiguous: boolean;
 }
 

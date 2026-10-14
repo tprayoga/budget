@@ -3,7 +3,7 @@
  * Pemakaian: npx ts-node --transpile-only scripts/split-evantama-po.ts [--commit]
  */
 import { PrismaClient } from '@prisma/client';
-import { dec, formatAngka, generateTermins, matchReferenceToTermin, moneyStr, sum, terminTax } from '@indotek/shared';
+import { dec, formatAngka, generateTermins, matchReferenceToTermin, moneyStr, referenceTarget, sum, terminTax } from '@indotek/shared';
 import { AuditService } from '../src/audit/audit.service';
 import { money } from '../src/common/decimal';
 import { poFlat } from '../src/clusters/po-support';
@@ -27,7 +27,7 @@ async function main() {
   if (!tpl) throw new Error('Template termin implementasi EVANTAMA tidak ada');
   const tplLines = tpl.lines.map((l) => ({ terminKe: l.terminKe, pct: l.pct.toString(), keterangan: l.keterangan }));
   const errors: string[] = [];
-  const simTermins: { id: string; clusterId: string; termin: number; expectedNet: string; label: string }[] = [];
+  const simTermins: { id: string; clusterId: string; termin: number; expectedNet: string; invoiceTotal: string; label: string }[] = [];
 
   console.log(`=== ${commit ? 'COMMIT' : 'DRY-RUN'} — pecah PO implementasi EVANTAMA (${NOTE})`);
   for (const p of PLAN) {
@@ -52,33 +52,40 @@ async function main() {
     console.log('   Termin implementasi (DPP):');
     for (const t of newCluster) {
       const old = po.termins.find((x) => x.termin === t.terminKe);
-      const net = terminTax({ amount: t.amount, ppnRate, pphRate }).expectedNet;
-      console.log(`      CLUSTER   termin ${t.terminKe}: ${old ? f(old.amount) : '—'} → ${f(t.amount)}  (net diharapkan ${f(net)})`);
-      simTermins.push({ id: old?.id ?? `new-${c.id}-C${t.terminKe}`, clusterId: c.id, termin: t.terminKe, expectedNet: moneyStr(net), label: `${p.cluster} CLUSTER termin ${t.terminKe}` });
+      const tax = terminTax({ amount: t.amount, ppnRate, pphRate });
+      console.log(`      CLUSTER   termin ${t.terminKe}: ${old ? f(old.amount) : '—'} → ${f(t.amount)}  (tagihan ${f(tax.invoiceTotal)}, net diharapkan ${f(tax.expectedNet)})`);
+      simTermins.push({ id: old?.id ?? `new-${c.id}-C${t.terminKe}`, clusterId: c.id, termin: t.terminKe, expectedNet: moneyStr(tax.expectedNet), invoiceTotal: moneyStr(tax.invoiceTotal), label: `${p.cluster} CLUSTER termin ${t.terminKe}` });
     }
     for (const t of newSub) {
-      const net = terminTax({ amount: t.amount, ppnRate, pphRate }).expectedNet;
-      console.log(`      SUBFEEDER termin ${t.terminKe}: — → ${f(t.amount)} (BARU)  (net diharapkan ${f(net)})`);
-      simTermins.push({ id: `new-${c.id}-S${t.terminKe}`, clusterId: c.id, termin: t.terminKe, expectedNet: moneyStr(net), label: `${p.cluster} SUBFEEDER termin ${t.terminKe}` });
+      const tax = terminTax({ amount: t.amount, ppnRate, pphRate });
+      console.log(`      SUBFEEDER termin ${t.terminKe}: — → ${f(t.amount)} (BARU)  (tagihan ${f(tax.invoiceTotal)}, net diharapkan ${f(tax.expectedNet)})`);
+      simTermins.push({ id: `new-${c.id}-S${t.terminKe}`, clusterId: c.id, termin: t.terminKe, expectedNet: moneyStr(tax.expectedNet), invoiceTotal: moneyStr(tax.invoiceTotal), label: `${p.cluster} SUBFEEDER termin ${t.terminKe}` });
     }
     console.log(`      Σ termin implementasi ${f(sum(po.termins.map((t) => t.amount.toString())))} → ${f(sum([...newCluster, ...newSub].map((t) => t.amount)))}`);
   }
 
   // simulasi pencocokan referensi implementasi yang belum diterapkan
   const refs = await prisma.clientInvoiceRef.findMany({ where: { projectId: project.id, appliedPaymentId: null, blockTitle: { contains: 'Implementasi' } } });
-  console.log('\n=== Simulasi pencocokan referensi implementasi setelah pemecahan (net = DPP + PPN − PPh ± Rp 10)');
+  console.log('\n=== Simulasi pencocokan referensi implementasi setelah pemecahan (aturan C: Paid → DPP + PPN − PPh; Unpaid → DPP + PPN; ± Rp 10)');
   const taken = new Set<string>();
   let ok = 0;
   for (const r of refs) {
     const block = r.blockTitle ?? '';
     const sub = /subfeeder/i.test(block);
-    const cands = simTermins.filter((t) => !taken.has(t.id) && t.label.includes(sub ? 'SUBFEEDER' : 'CLUSTER'));
+    const cands = simTermins
+      .filter((t) => !taken.has(t.id) && t.label.includes(sub ? 'SUBFEEDER' : 'CLUSTER'))
+      .map((t) => ({ ...t, expectedNet: moneyStr(referenceTarget(t, r.paid)) }));
     const m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
     if (m.match) {
       taken.add(m.match.id);
       ok++;
     }
-    console.log(`   ${r.invoiceNo} ${block} net ${f(r.netAmount ?? 0)} → ${m.match ? `COCOK ${m.match.label} (net ${f(m.match.expectedNet)})` : 'tidak cocok'}`);
+    const byNet = !m.match && !r.paid ? simTermins.find((t) => dec(t.expectedNet).minus(dec(r.netAmount?.toString() ?? 0)).abs().lte(10)) : undefined;
+    console.log(
+      `   ${r.invoiceNo} ${block} ${r.paid ? 'Paid' : 'Unpaid'} ${f(r.netAmount ?? 0)} → ${
+        m.match ? `COCOK ${m.match.label} (${r.paid ? 'net' : 'tagihan'} ${f(m.match.expectedNet)})` : `tidak cocok${byNet ? ` (nilainya = net diharapkan ${byNet.label}, bukan tagihan)` : ''}`
+      }`,
+    );
   }
   console.log(`   Cocok: ${ok} dari ${refs.length}`);
 

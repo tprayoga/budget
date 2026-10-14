@@ -337,6 +337,7 @@ describe('Import penyesuaian PO ADW (baris "Deduction Termin 1 + Addwork")', () 
 describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayaran klien belum lengkap', () => {
   it('PPN per client (ADMIN) meng-override global untuk termin baru; diaudit', async () => {
     const ccsi = await ctx.prisma.client.findUniqueOrThrow({ where: { name: 'CCSI' } });
+    const original = ccsi.ppnRate?.toString() ?? null;
     await ctx.api('pm').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: '0' }).expect(403);
     await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: '0', reason: 'uji' }).expect(200);
     const sem = await clusterId(ctx.prisma, 'CCSI', 'Padangsari RW 12 & 13 (Semarang)');
@@ -346,21 +347,60 @@ describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayara
     const log = await ctx.prisma.auditLog.findFirst({ where: { entity: 'Client', entityId: ccsi.id, field: 'alasan' }, orderBy: { at: 'desc' } });
     expect(log?.newValue).toBe('uji');
     await ctx.api('finance').del(`/client-payments/${t.body.id}`).expect(200);
-    await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: null }).expect(200);
+    await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: original }).expect(200);
   });
 
-  it('referensi = DPP termin → usulan "cocok di DPP" (perlu konfirmasi pajak), tidak ikut terapkan otomatis', async () => {
-    const sem = await clusterId(ctx.prisma, 'CCSI', 'Padangsari RW 12 & 13 (Semarang)');
-    const c = await cluster(sem);
-    const ref = await ctx.prisma.clientInvoiceRef.create({
-      data: { sourceRef: 'UJI:DPP', projectId: c.projectId, clusterId: sem, invoiceNo: 'INV-UJI-DPP', netAmount: '36000000', statusText: 'Unpaid', paid: false },
+  it('aturan C: referensi Unpaid = tagihan (DPP + PPN); referensi = DPP termin → "cocok di DPP" (perlu konfirmasi pajak), tidak diterapkan otomatis', async () => {
+    const rw04 = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Kersanagara RW 04 Tasik');
+    const c = await cluster(rw04);
+    const list0 = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
+    const t1 = list0.body.payments.find((p: { kind: string; termin: number }) => p.kind === 'PERMIT' && p.termin === 1);
+    // DPP 2.500.000 (50% × 5.000.000), PPN 11% → tagihan 2.775.000
+    const dpp = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:DPP', projectId: c.projectId, clusterId: rw04, termin: 1, invoiceNo: 'INV-UJI-DPP', netAmount: t1.amount, statusText: 'Unpaid', paid: false },
     });
-    const list = await ctx.api('finance').get(`/clusters/${sem}/client-payments`).expect(200);
-    const r = list.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id);
-    expect(r.suggestion).toMatchObject({ mode: 'DPP', perluKonfirmasiPajak: true, kind: 'PERMIT', termin: 1, expectedNet: '36000000.00' });
-    const res = await ctx.api('finance').post(`/clusters/${sem}/client-payments/apply-matched`, { refIds: [ref.id] }).expect(201);
+    let list = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
+    expect(list.body.invoiceRefs.find((x: { id: string }) => x.id === dpp.id).suggestion).toMatchObject({ mode: 'DPP', basis: 'DPP', perluKonfirmasiPajak: true, paymentId: t1.id });
+    const res = await ctx.api('finance').post(`/clusters/${rw04}/client-payments/apply-matched`, { refIds: [dpp.id] }).expect(201);
     expect(res.body.applied).toEqual([]);
-    expect((await ctx.prisma.clientInvoiceRef.findUniqueOrThrow({ where: { id: ref.id } })).appliedPaymentId).toBeNull();
+    await ctx.prisma.clientInvoiceRef.delete({ where: { id: dpp.id } });
+    // Unpaid = tagihan DPP + PPN → cocok (INVOICE) → diterapkan sebagai INVOICED
+    const inv = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:INV', projectId: c.projectId, clusterId: rw04, termin: 1, invoiceNo: 'INV-UJI-INV', netAmount: t1.invoiceTotal, statusText: 'Unpaid', paid: false },
+    });
+    list = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
+    expect(list.body.invoiceRefs.find((x: { id: string }) => x.id === inv.id).suggestion).toMatchObject({ mode: 'NET', basis: 'INVOICE', paymentId: t1.id });
+    await ctx.api('finance').post(`/clusters/${rw04}/client-payments/apply-matched`, { refIds: [inv.id] }).expect(201);
+    expect((await ctx.prisma.clientPayment.findUniqueOrThrow({ where: { id: t1.id } })).status).toBe('INVOICED');
+    await ctx.prisma.clientInvoiceRef.update({ where: { id: inv.id }, data: { appliedPaymentId: null } });
+    await ctx.api('finance').patch(`/client-payments/${t1.id}`, { invoiceNo: null }).expect(200);
+    await ctx.prisma.clientPayment.update({ where: { id: t1.id }, data: { status: 'UNBILLED' } });
+    await ctx.prisma.clientInvoiceRef.delete({ where: { id: inv.id } });
+  });
+
+  it('CCSI: PPN 0 (client), template implementasi 30/30/30/10 per PO, termin 4 retensi 3 bulan dari opname; referensi tanpa nomor termin → termin terkecil', async () => {
+    const ccsi = await ctx.prisma.client.findUniqueOrThrow({ where: { name: 'CCSI' } });
+    expect(ccsi.ppnRate?.toString()).toBe('0');
+    const kal = await clusterId(ctx.prisma, 'CCSI', 'Kalawiran Kakas Barat (Manado)');
+    const list = await ctx.api('finance').get(`/clusters/${kal}/client-payments`).expect(200);
+    const impl = list.body.payments.filter((p: { kind: string }) => p.kind === 'IMPLEMENTASI');
+    expect(impl.map((p: { pct: string; amount: string; ppnRate: string }) => [p.pct, p.amount, p.ppnRate])).toEqual([
+      ['0.3', '16325968.8', '0'],
+      ['0.3', '16325968.8', '0'],
+      ['0.3', '16325968.8', '0'],
+      ['0.1', '5441989.6', '0'],
+    ]);
+    expect(impl[3].retentionMonths).toBe(3);
+    const t4 = await ctx.api('finance').patch(`/client-payments/${impl[3].id}`, { opnameDate: '2026-11-30' }).expect(200);
+    expect(t4.body).toMatchObject({ opnameDate: '2026-11-30', retentionReleaseDate: '2027-02-28' });
+    await ctx.api('finance').patch(`/client-payments/${impl[3].id}`, { opnameDate: null }).expect(200);
+    // referensi project-level tanpa nomor termin = 30% → cocok termin 1 (bukan ganda)
+    const c = await cluster(kal);
+    const ref = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:CCSI-004', projectId: c.projectId, clusterId: null, invoiceNo: 'INV-UJI-004', netAmount: '16325969', statusText: 'Unpaid', paid: false },
+    });
+    const l2 = await ctx.api('finance').get(`/clusters/${kal}/client-payments`).expect(200);
+    expect(l2.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id).suggestion).toMatchObject({ mode: 'NET', basis: 'INVOICE', paymentId: impl[0].id, termin: 1 });
     await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
   });
 

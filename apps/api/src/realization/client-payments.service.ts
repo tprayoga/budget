@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ClientInvoiceRef, ClientPayment, ClientPaymentStatus, Prisma, PrismaClient, TerminKind } from '@prisma/client';
 import {
+  addMonths,
   calcDueDate,
   dec,
   generateTermins,
@@ -8,6 +9,8 @@ import {
   moneyStr,
   paymentDeduction,
   PO_KIND_LABEL,
+  referenceTarget,
+  REF_MATCH_TOLERANCE,
   sum,
   terminTax,
   todayJakartaIso,
@@ -93,6 +96,9 @@ export function paymentDto(p: ClientPayment) {
     invoiceTotal: moneyStr(t.invoiceTotal),
     expectedNet: moneyStr(t.expectedNet),
     keterangan: p.keterangan,
+    retentionMonths: p.retentionMonths,
+    opnameDate: iso(p.opnameDate),
+    retentionReleaseDate: iso(p.retentionReleaseDate),
     invoiceNo: p.invoiceNo,
     invoiceDate: iso(p.invoiceDate),
     dueDate: iso(p.dueDate),
@@ -117,12 +123,19 @@ function flat(p: ClientPayment | null) {
     paidAmount: s(p.paidAmount),
     status: p.status,
     keterangan: p.keterangan,
+    opnameDate: iso(p.opnameDate),
+    retentionReleaseDate: iso(p.retentionReleaseDate),
   };
 }
 
 export interface RefSuggestion {
-  /** NET = net referensi = DPP + PPN − PPh termin; DPP = net referensi = DPP termin (tanpa PPN/PPh). */
+  /**
+   * NET = nilai referensi cocok dengan nilai pembanding aturan C (Paid: DPP + PPN − PPh; Unpaid: DPP + PPN);
+   * DPP = nilai referensi = DPP termin (tanpa PPN/PPh) — perlu konfirmasi pajak.
+   */
   mode: 'NET' | 'DPP';
+  /** Nilai pembanding yang dipakai: NET_PAID (net diharapkan), INVOICE (tagihan), DPP. */
+  basis: 'NET_PAID' | 'INVOICE' | 'DPP';
   /** Mode DPP: perlu konfirmasi pajak (mis. invoice tanpa PPN) — tidak ikut "Terapkan semua yang cocok". */
   perluKonfirmasiPajak: boolean;
   paymentId: string;
@@ -152,9 +165,10 @@ export async function referenceMatches(db: Db, projectId: string) {
       out.set(r.id, { suggestion: null, ambiguous: false });
       continue;
     }
+    // aturan C: Paid → net diharapkan (DPP + PPN − PPh); Unpaid → tagihan (DPP + PPN)
     const cands = payments
       .filter((p) => !taken.has(p.id) && (!r.clusterId || p.clusterId === r.clusterId))
-      .map((p) => ({ id: p.id, termin: p.termin, expectedNet: paymentTax(p).expectedNet, p }));
+      .map((p) => ({ id: p.id, termin: p.termin, expectedNet: referenceTarget(paymentTax(p), r.paid), group: p.poId, p }));
     let m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
     let mode: 'NET' | 'DPP' = 'NET';
     if (!m.match && !m.ambiguous) {
@@ -174,6 +188,7 @@ export async function referenceMatches(db: Db, projectId: string) {
       out.set(r.id, {
         suggestion: {
           mode,
+          basis: mode === 'DPP' ? 'DPP' : r.paid ? 'NET_PAID' : 'INVOICE',
           perluKonfirmasiPajak: mode === 'DPP',
           paymentId: m.match.id,
           clusterId: m.match.p.clusterId,
@@ -268,6 +283,8 @@ export class ClientPaymentsService {
       const paidDate = input.paidDate !== undefined ? (input.paidDate ? day(input.paidDate) : null) : before.paidDate;
       const paidAmount = input.paidAmount !== undefined ? (input.paidAmount ? money(input.paidAmount) : null) : before.paidAmount;
       const amount = input.amount !== undefined ? money(input.amount) : before.amount;
+      const opnameDate = input.opnameDate !== undefined ? (input.opnameDate ? day(input.opnameDate) : null) : before.opnameDate;
+      const retentionReleaseDate = opnameDate && before.retentionMonths ? addMonths(opnameDate, before.retentionMonths) : null;
       const ppnRate = input.ppnRate !== undefined ? rate(input.ppnRate) : before.ppnRate;
       const pphRate = input.pphRate !== undefined ? rate(input.pphRate) : before.pphRate;
       const tax = terminTax({ amount: amount.toString(), ppnRate: ppnRate.toString(), pphRate: pphRate.toString() });
@@ -294,6 +311,8 @@ export class ClientPaymentsService {
           amount,
           ppnRate,
           pphRate,
+          opnameDate,
+          retentionReleaseDate,
           keterangan: input.keterangan !== undefined ? input.keterangan : undefined,
           invoiceNo: input.invoiceNo !== undefined ? input.invoiceNo : undefined,
           invoiceDate,
@@ -323,7 +342,8 @@ export class ClientPaymentsService {
     const net = ref.netAmount;
     if (ref.paid && !net) throw new BadRequestException('Referensi Paid tanpa nilai net — isi termin manual');
     const tax = terminTax({ amount: amount.toString(), ppnRate: before.ppnRate.toString(), pphRate: before.pphRate.toString() });
-    if (net && net.gt(tax.invoiceTotal.toFixed(2))) throw new BadRequestException('Nilai net referensi melebihi tagihan (DPP + PPN) termin');
+    // toleransi sama dengan pencocokan (± Rp 10) — selisih pembulatan termin vs invoice
+    if (net && net.gt(tax.invoiceTotal.plus(REF_MATCH_TOLERANCE).toFixed(2))) throw new BadRequestException('Nilai net referensi melebihi tagihan (DPP + PPN) termin');
     const paid = ref.paid && !!net;
     const paidDate = paid ? (paidDateInput ? day(paidDateInput) : ref.dueDate) : null;
     const after = await tx.clientPayment.update({
@@ -638,7 +658,18 @@ export async function recalcCluster(db: Db, audit: AuditService, userId: string 
         } else {
           const r = rows.find((x) => x.terminKe === d.termin)!;
           const p = await db.clientPayment.create({
-            data: { clusterId, poId: po.id, fromTemplate: !!tpl, kind: po.kind, termin: d.termin, pct: rate(r.pct), amount: money(d.newAmount), keterangan: r.keterangan, ...tax! },
+            data: {
+              clusterId,
+              poId: po.id,
+              fromTemplate: !!tpl,
+              kind: po.kind,
+              termin: d.termin,
+              pct: rate(r.pct),
+              amount: money(d.newAmount),
+              keterangan: r.keterangan,
+              retentionMonths: tpl?.lines.find((l) => l.terminKe === d.termin)?.retentionMonths ?? null,
+              ...tax!,
+            },
           });
           await audit.diff(db, userId, 'ClientPayment', p.id, null, { amount: d.newAmount, sumber: 'hitung-ulang-termin' });
         }

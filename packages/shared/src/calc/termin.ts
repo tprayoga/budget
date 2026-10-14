@@ -64,3 +64,16 @@ export function calcDueDate(
   return d;
 }
 
+
+/**
+ * Tambah N bulan kalender ke tanggal ("YYYY-MM-DD"/Date, UTC). Tanggal yang tidak ada di bulan tujuan
+ * dijepit ke akhir bulan (31 Mei + 3 bulan = 31 Agustus; 30 Nov + 3 bulan = 28/29 Februari).
+ * Dipakai tanggal pelepasan retensi = tanggal opname + N bulan.
+ */
+export function addMonths(start: Date | string, months: number): Date {
+  const d = parseDay(start);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + months;
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m, Math.min(d.getUTCDate(), last)));
+}

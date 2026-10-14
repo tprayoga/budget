@@ -101,10 +101,20 @@ export function calcRealizedProfit(
 export const REF_MATCH_TOLERANCE = 10;
 
 /**
- * Usulan pencocokan referensi tagihan RAB → termin: |net − expectedNet| ≤ toleransi.
- * Bila lebih dari satu kandidat, pilih yang nomor terminnya sama dengan referensi; tetap ganda → tidak cocok (null).
+ * Nilai pembanding termin untuk referensi tagihan RAB (aturan Fase 2.4 C, semua client):
+ *  - referensi Paid    → net diharapkan (DPP + PPN − PPh), diterapkan sebagai PAID;
+ *  - referensi Unpaid  → nilai tagihan (DPP + PPN), diterapkan sebagai INVOICED.
  */
-export function matchReferenceToTermin<T extends { id: string; termin: number; expectedNet: Num }>(
+export function referenceTarget(tax: { invoiceTotal: Num; expectedNet: Num }, paid: boolean): D {
+  return dec(paid ? tax.expectedNet : tax.invoiceTotal);
+}
+
+/**
+ * Usulan pencocokan referensi tagihan RAB → termin: |nilai referensi − nilai pembanding| ≤ toleransi.
+ * Bila lebih dari satu kandidat, pilih yang nomor terminnya sama dengan referensi; referensi tanpa nomor termin dan
+ * semua kandidat dari PO yang sama (`group`) → termin terkecil; selain itu ganda → tidak cocok (null).
+ */
+export function matchReferenceToTermin<T extends { id: string; termin: number; expectedNet: Num; group?: string | null }>(
   ref: { netAmount: Num | null | undefined; termin?: number | null },
   candidates: T[],
   tolerance: Num = REF_MATCH_TOLERANCE,
@@ -116,6 +126,10 @@ export function matchReferenceToTermin<T extends { id: string; termin: number; e
   if (hits.length > 1) {
     const same = hits.filter((h) => ref.termin != null && h.termin === ref.termin);
     if (same.length === 1) return { match: same[0], ambiguous: false };
+    // semua kandidat dari PO yang sama (mis. termin 30/30/30 bernilai sama) → termin terkecil (berikutnya ditagih)
+    if (ref.termin == null && hits.every((h) => h.group && h.group === hits[0].group)) {
+      return { match: [...hits].sort((a, b) => a.termin - b.termin)[0], ambiguous: false };
+    }
     return { match: null, ambiguous: true };
   }
   return { match: null, ambiguous: false };

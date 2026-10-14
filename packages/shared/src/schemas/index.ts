@@ -261,6 +261,8 @@ export const clientPaymentUpdateSchema = z.object({
   dueDate: zDate.nullish(),
   paidDate: zDate.nullish(),
   paidAmount: zNonNegDecimal.nullish(),
+  /** Termin retensi: tanggal opname ditandatangani → tanggal pelepasan retensi dihitung otomatis. */
+  opnameDate: zDate.nullish(),
   ppnRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).optional(),
   pphRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).optional(),
   status: z.enum(CLIENT_PAYMENT_STATUSES).optional(),

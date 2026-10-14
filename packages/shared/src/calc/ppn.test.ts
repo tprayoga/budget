@@ -34,6 +34,10 @@ describe('Acuan Q — PPN pada termin klien (Fase 2.4)', () => {
     expect(matchReferenceToTermin({ netAmount: '20044750', termin: 2 }, t).match?.id).toBe('b');
     expect(matchReferenceToTermin({ netAmount: '20044750', termin: null }, t)).toEqual({ match: null, ambiguous: true });
     expect(matchReferenceToTermin({ netAmount: null }, t).match).toBeNull();
+    // CCSI 30/30/30 dari PO yang sama, referensi tanpa nomor termin → termin terkecil
+    const same = [3, 1, 2].map((n) => ({ id: `t${n}`, termin: n, expectedNet: '16325968.80', group: 'po-kal' }));
+    expect(matchReferenceToTermin({ netAmount: '16325969' }, same).match?.id).toBe('t1');
+    expect(matchReferenceToTermin({ netAmount: '16325969' }, [...same, { id: 'x', termin: 1, expectedNet: '16325969', group: 'po-lain' }]).ambiguous).toBe(true);
   });
 });
 

@@ -56,6 +56,7 @@ export async function generateClientPayments(db: Db, clusterId: string, onlyPoId
     const isTemplateKind = (TEMPLATE_PO_KINDS as readonly string[]).includes(po.kind);
     const tpl = isTemplateKind ? templates.find((t) => t.kind === po.kind) : undefined;
     if (isTemplateKind && !tpl?.lines.length) continue;
+    const retention = new Map((tpl?.lines ?? []).map((l) => [l.terminKe, l.retentionMonths ?? null]));
     const lines = tpl
       ? tpl.lines.map((l) => ({ terminKe: l.terminKe, pct: l.pct.toString(), keterangan: l.keterangan }))
       : [{ terminKe: 1, pct: '1', keterangan: 'SND 100%' }];
@@ -74,6 +75,7 @@ export async function generateClientPayments(db: Db, clusterId: string, onlyPoId
           pct: rate(r.pct),
           amount: money(r.amount),
           keterangan: r.keterangan,
+          retentionMonths: retention.get(r.terminKe) ?? null,
           ...tax,
         },
       });

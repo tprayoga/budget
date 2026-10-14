@@ -10,6 +10,7 @@ import { seedDefaultRabRules } from '../src/import/default-rab-rules';
 import { applyPatch22 } from '../src/import/patch-2-2';
 import { applyPatch23 } from '../src/import/patch-2-3';
 import { applyPatch24 } from '../src/import/patch-2-4';
+import { applyCcsiDecisions } from '../src/import/patch-2-5-ccsi';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -258,6 +259,8 @@ async function main() {
   if (patch23.length) console.log(`Patch keputusan 2.3: ${patch23.join('; ')}`);
   const patch24 = await applyPatch24(prisma, audit, admin?.id ?? null);
   if (patch24.length) console.log(`Patch keputusan 2.4: ${patch24.join('; ')}`);
+  const patch25 = await applyCcsiDecisions(prisma, audit, admin?.id ?? null, true);
+  if (patch25.length) console.log(`Patch keputusan CCSI (2.5): ${patch25.length} langkah`);
 
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },

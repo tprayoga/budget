@@ -50,7 +50,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['client-payments', clusterId], queryFn: () => api<ClientPaymentsResponse>(`/clusters/${clusterId}/client-payments`) });
   const [edit, setEdit] = useState<ClientPayment | null>(null);
-  const [form, setForm] = useState({ amount: '', ppn: '', pph: '', invoiceNo: '', invoiceDate: '', dueDate: '', paidDate: '', paidAmount: '' });
+  const [form, setForm] = useState({ amount: '', ppn: '', pph: '', invoiceNo: '', invoiceDate: '', dueDate: '', paidDate: '', paidAmount: '', opnameDate: '' });
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkDate, setBulkDate] = useState('');
   const [addOpen, setAddOpen] = useState(false);
@@ -65,6 +65,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
         json: {
           amount: rpInputToValue(form.amount) ?? undefined,
           ppnRate: pctInputToRatio(form.ppn) ?? undefined,
+          ...(edit?.retentionMonths ? { opnameDate: form.opnameDate || null } : {}),
           pphRate: pctInputToRatio(form.pph) ?? undefined,
           invoiceNo: form.invoiceNo || null,
           invoiceDate: form.invoiceDate || null,
@@ -181,6 +182,11 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                     <td className="td whitespace-normal">
                       <b>Termin {p.termin}</b>{p.pct && <span className="text-slate-500"> · {formatPersen(p.pct, 0)}</span>}
                       <div className="text-[11px] text-slate-500">{p.keterangan}</div>
+                      {p.retentionMonths ? (
+                        <div className="text-[11px] text-sky-700" data-testid="retensi-info">
+                          Retensi {p.retentionMonths} bln · {p.retentionReleaseDate ? `cair ${formatTanggal(p.retentionReleaseDate)} (opname ${formatTanggal(p.opnameDate)})` : 'tanggal opname belum diisi'}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="td num"><Money value={p.amount} plain /></td>
                     <td className="td num text-slate-500"><Money value={p.ppnAmount} plain /><div className="text-[11px]">{formatPersen(p.ppnRate, 0)}</div></td>
@@ -200,7 +206,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                           aria-label={`Ubah termin ${p.kind} ${p.termin}`}
                           onClick={() => {
                             setEdit(p);
-                            setForm({ amount: toInput(p.amount), ppn: ratioToPctInput(p.ppnRate), pph: ratioToPctInput(p.pphRate), invoiceNo: p.invoiceNo ?? '', invoiceDate: p.invoiceDate ?? '', dueDate: p.dueDate ?? '', paidDate: p.paidDate ?? '', paidAmount: p.paidAmount ? toInput(p.paidAmount) : '' });
+                            setForm({ amount: toInput(p.amount), ppn: ratioToPctInput(p.ppnRate), pph: ratioToPctInput(p.pphRate), opnameDate: p.opnameDate ?? '', invoiceNo: p.invoiceNo ?? '', invoiceDate: p.invoiceDate ?? '', dueDate: p.dueDate ?? '', paidDate: p.paidDate ?? '', paidAmount: p.paidAmount ? toInput(p.paidAmount) : '' });
                           }}
                         >
                           <Pencil className="h-4 w-4" />
@@ -232,7 +238,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
           <div>
             <h3 className="text-sm font-semibold">Referensi tagihan dari file RAB</h3>
-            <p className="text-xs text-slate-500">Nilai RAB = net (DPP + PPN − PPh). Usulan "cocok" bila net = net diharapkan termin (± Rp 10); tetap harus dikonfirmasi.</p>
+            <p className="text-xs text-slate-500">Referensi Unpaid dicocokkan dengan tagihan (DPP + PPN), referensi Paid dengan net (DPP + PPN − PPh), ± Rp 10. Usulan tetap harus dikonfirmasi.</p>
           </div>
           {editable && matched.length > 0 && (
             <button className="btn-primary px-2 py-1 text-xs" onClick={() => setBulkOpen(true)}>Terapkan semua yang cocok ({matched.length})</button>
@@ -258,7 +264,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                       </span>
                     ) : r.suggestion ? (
                       <span className="text-emerald-700">
-                        <b>cocok</b> → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
+                        <b>cocok</b>{r.suggestion.basis === 'INVOICE' ? ' (tagihan)' : r.suggestion.basis === 'NET_PAID' ? ' (net dibayar)' : ''} → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
                         {r.suggestion.selisih !== '0.00' && <span className="text-slate-500"> (selisih {formatAngka(r.suggestion.selisih, 2)})</span>}
                       </span>
                     ) : r.ambiguous ? (
@@ -373,6 +379,11 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
           <Field label="Jatuh tempo" hint={edit && aging(edit.kind)?.agingDays != null ? 'Dihitung otomatis dari template' : 'Isi manual'}>
             <input type="date" className="input" value={form.dueDate} disabled={!!(edit && aging(edit.kind)?.agingDays != null)} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} />
           </Field>
+          {edit?.retentionMonths ? (
+            <Field label="Tanggal opname ditandatangani" hint={`Retensi cair ${edit.retentionMonths} bulan setelahnya`}>
+              <input type="date" className="input" value={form.opnameDate} onChange={(e) => setForm({ ...form, opnameDate: e.target.value })} aria-label="Tanggal opname" />
+            </Field>
+          ) : null}
           <Field label="Tanggal dibayar"><input type="date" className="input" value={form.paidDate} onChange={(e) => setForm({ ...form, paidDate: e.target.value })} aria-label="Tanggal dibayar" /></Field>
           <Field label="Nominal diterima (Rp)"><input className="input text-right" inputMode="decimal" value={form.paidAmount} onChange={(e) => setForm({ ...form, paidAmount: e.target.value })} aria-label="Nominal diterima" /></Field>
         </div>
