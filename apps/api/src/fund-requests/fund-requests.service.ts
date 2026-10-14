@@ -8,6 +8,7 @@ import {
 import { Prisma, type FundRequest, type FundRequestLine } from '@prisma/client';
 import {
   aggregateFrHistory,
+  D,
   allowedActions,
   BUDGET_LABEL,
   calcCluster,
@@ -23,7 +24,7 @@ import {
   FR_CODES,
   FR_DEFAULT_KETERANGAN,
   frBudgetAmounts,
-  frDefaultPctCair,
+  frDefaultPcts,
   frHabis,
   frSection,
   inboxStatuses,
@@ -195,9 +196,10 @@ export class FundRequestsService {
     await this.prisma.$transaction(async (tx) => {
       const before = await tx.fundRequest.findUniqueOrThrow({ where: { id: fr.id }, include: { lines: true } });
       const probe = await this.computeDraft(tx, fr.id, fr.clusterId, this.intentsFromLines(before.lines));
+      // batas default = % sisa per pos yang sudah diskalakan ke sisa cluster
+      const defs = frDefaultPcts(probe.frCalc.lines);
       const intents = this.intentsFromLines(before.lines).map((i) => {
-        const line = probe.frCalc.lines.find((l) => l.code === i.budgetCode)!;
-        const def = frDefaultPctCair(line);
+        const def = defs[i.budgetCode];
         return i.pctCair !== null && dec(i.pctCair).gt(def) ? { ...i, pctCair: def.toString() } : i;
       });
       const c = await this.computeDraft(tx, fr.id, fr.clusterId, intents);
@@ -257,6 +259,7 @@ export class FundRequestsService {
       };
     }
     const lineMeta = new Map(fr.lines.map((l) => [l.budgetCode, l]));
+    const defaultPcts = frDefaultPcts(calc.lines);
     const lines = calc.lines.map((l) => ({
       budgetCode: l.code,
       label: lineMeta.get(l.code)?.label ?? BUDGET_LABEL[l.code],
@@ -271,7 +274,7 @@ export class FundRequestsService {
       sudahTerpakai: moneyStr(l.sudahTerpakai),
       sisaTersedia: moneyStr(l.sisaTersedia),
       /** % cair "sisa budget" (dibulatkan ke bawah 0,01%) — tombol cepat wizard. */
-      pctSisa: frDefaultPctCair(l).toString(),
+      pctSisa: defaultPcts[l.code].toString(),
       habis: l.habis,
       sisaBudget: moneyStr(l.sisaBudget),
       sisaSetelahProses: moneyStr(l.sisaSetelahProses),
@@ -291,8 +294,19 @@ export class FundRequestsService {
       sisaBudget: moneyStr(t.sisaBudget),
     });
 
+    const cl = calc.cluster;
     return {
       recalcNote: live ? fr.recalcNote : null,
+      /** Batas cluster: over di satu pos mengurangi ruang pengajuan cluster. */
+      batasCluster: {
+        budget: moneyStr(cl.budget),
+        terpakai: moneyStr(cl.terpakai),
+        overPos: moneyStr(cl.overPos),
+        sisaCluster: moneyStr(D.max(cl.sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN)),
+        diajukan: moneyStr(cl.diajukan),
+        exceeded: cl.exceeded,
+        penyesuaian: cl.penyesuaian,
+      },
       id: fr.id,
       number: fr.number,
       label: fr.number ?? draftLabel(fr.id),
@@ -419,8 +433,21 @@ export class FundRequestsService {
       sisaTersedia: sum(ls.map((l) => (l.habis ? dec(0) : l.sisaTersedia.toDecimalPlaces(0, 1)))),
       sisaBudget: sum(ls.map((l) => l.sisaBudget)),
     });
+    const clBudget = sum(lines.map((l) => l.budgetAmount.toDecimalPlaces(0, D.ROUND_HALF_UP)));
+    const clTerpakai = sum(lines.map((l) => l.sudahTerpakai.plus(l.sedangDiproses)));
+    const clDiajukan = sum(lines.map((l) => l.diajukan));
+    const clSisa = clBudget.minus(clTerpakai);
     return {
       nilaiProyek: dec(fr.nilaiProyek.toString()),
+      cluster: {
+        budget: clBudget,
+        terpakai: clTerpakai,
+        overPos: sum(lines.map((l) => (l.sisaTersedia.isNegative() ? l.sisaTersedia.neg() : dec(0)))),
+        sisaCluster: clSisa,
+        diajukan: clDiajukan,
+        exceeded: clDiajukan.gt(0) && clDiajukan.gt(D.max(clSisa, 0).toDecimalPlaces(0, D.ROUND_DOWN)),
+        penyesuaian: false,
+      },
       lines,
       subtotalA: tot(lines.filter((l) => l.section === 'A')),
       subtotalB: tot(lines.filter((l) => l.section === 'B')),
@@ -458,21 +485,23 @@ export class FundRequestsService {
     );
     const real = await realisasiTanpaPengajuan(tx, clusterId);
     const byCode = new Map(intents.map((i) => [i.budgetCode, i]));
+    const bases = FR_CODES.map((code) => ({
+      code,
+      budgetAmount: moneyStr(amounts[code]),
+      sudahDicairkanSebelum: hist.sudahDicairkanSebelum[code],
+      sedangDiproses: hist.sedangDiproses[code],
+      realisasiTanpaPengajuan: real[code],
+      pctCairSebelumnya: hist.pctCairSebelumnya[code],
+    }));
+    // default % cair = sisa tersedia / budget (pos habis → 0), diskalakan bila melebihi sisa cluster
+    const defaults = frDefaultPcts(bases);
     const frCalc = computeFundRequest(
       calc.nilaiProyek,
-      FR_CODES.map((code) => {
-        const base = {
-          code,
-          budgetAmount: moneyStr(amounts[code]),
-          sudahDicairkanSebelum: hist.sudahDicairkanSebelum[code],
-          sedangDiproses: hist.sedangDiproses[code],
-          realisasiTanpaPengajuan: real[code],
-          pctCairSebelumnya: hist.pctCairSebelumnya[code],
-        };
-        // default % cair = sisa tersedia / budget (pos habis → 0)
-        const pct = byCode.get(code)?.pctCair ?? frDefaultPctCair(base).toString();
-        return { ...base, pctCair: pct, keterangan: byCode.has(code) ? byCode.get(code)!.keterangan : (FR_DEFAULT_KETERANGAN[code] ?? null) };
-      }),
+      bases.map((base) => ({
+        ...base,
+        pctCair: byCode.get(base.code)?.pctCair ?? defaults[base.code].toString(),
+        keterangan: byCode.has(base.code) ? byCode.get(base.code)!.keterangan : (FR_DEFAULT_KETERANGAN[base.code] ?? null),
+      })),
     );
     return {
       cluster,
@@ -545,10 +574,17 @@ export class FundRequestsService {
         realisasiTanpaPengajuan: moneyStr(l.realisasiTanpaPengajuan),
         sisa: moneyStr(l.sisaSetelahProses),
       }));
+    const cl = calc.cluster;
+    const clusterMsg = cl.exceeded
+      ? `total diajukan Rp ${moneyStr(cl.diajukan)} melebihi sisa cluster Rp ${moneyStr(D.max(cl.sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN))}`
+      : null;
     return new ConflictException({
-      message: `Pengajuan melebihi sisa budget pada pos: ${details.map((d) => d.label).join(', ')}`,
+      message: [details.length ? `Pengajuan melebihi sisa budget pada pos: ${details.map((d) => d.label).join(', ')}` : null, clusterMsg ? `Batas cluster: ${clusterMsg}` : null]
+        .filter(Boolean)
+        .join('; '),
       code: 'OVER_BUDGET',
       overBudget: details,
+      cluster: cl.exceeded ? { sisaCluster: moneyStr(cl.sisaCluster), diajukan: moneyStr(cl.diajukan), overPos: moneyStr(cl.overPos) } : null,
     });
   }
 
@@ -581,6 +617,26 @@ export class FundRequestsService {
     });
     // pos yang tidak diajukan (diajukan 0) tidak menggagalkan validasi walaupun sudah over
     const bad = lines.filter((x) => dec(x.l.diajukan.toString()).gt(0) && x.sisa.isNegative() && !x.sisa.isZero());
+    // batas cluster: Σ diajukan ≤ Σ ROUND(budget) − Σ (sudah + sedang + realisasi) semua pos
+    const sisaCluster = sum(
+      fr.lines.map((l) =>
+        dec(l.budgetAmount.toString())
+          .toDecimalPlaces(0, 4)
+          .minus(hist.sudahDicairkanSebelum[l.budgetCode])
+          .minus(hist.sedangDiproses[l.budgetCode])
+          .minus(real[l.budgetCode]),
+      ),
+    );
+    const totalDiajukan = sum(fr.lines.map((l) => l.diajukan.toString()));
+    const clusterLimit = D.max(sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN);
+    if (!bad.length && totalDiajukan.gt(clusterLimit) && totalDiajukan.gt(0) && !fr.overrideReason) {
+      throw new ConflictException({
+        message: `Batas cluster: total diajukan Rp ${moneyStr(totalDiajukan)} melebihi sisa cluster Rp ${moneyStr(clusterLimit)}`,
+        code: 'OVER_BUDGET',
+        overBudget: [],
+        cluster: { sisaCluster: moneyStr(sisaCluster), diajukan: moneyStr(totalDiajukan) },
+      });
+    }
     if (bad.length && !fr.overrideReason) {
       throw new ConflictException({
         message: `Pengajuan melebihi sisa budget pada pos: ${bad.map((b) => b.l.label).join(', ')}`,
@@ -729,7 +785,7 @@ export class FundRequestsService {
       const c = await this.computeDraft(tx, id, before.clusterId, this.intentsFromLines(before.lines));
       if (c.frCalc.total.diajukan.lte(0)) throw new BadRequestException('Total pengajuan harus lebih dari 0');
       let overrideReason: string | null = null;
-      if (c.frCalc.overBudgetCodes.length) {
+      if (c.frCalc.overBudgetCodes.length || c.frCalc.cluster.exceeded) {
         if (opts.override && user.role === 'ADMIN' && opts.overrideReason?.trim()) {
           overrideReason = opts.overrideReason.trim();
         } else if (opts.override && user.role !== 'ADMIN') {

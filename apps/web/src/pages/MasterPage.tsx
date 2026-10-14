@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { ROLE_LABEL } from '@indotek/shared';
 import { api, errorMessage } from '../api/client';
 import type { Client, Project } from '../api/types';
+import { pctInputToRatio, ratioToPctInput } from '../lib/format';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Field, Modal, PageHeader, Spinner } from '../components/ui';
 
@@ -42,7 +43,7 @@ export function MasterPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="card min-w-0 p-4">
           <h2 className="mb-3 font-semibold">Pemberi kerja</h2>
-          <ul className="mb-3 divide-y text-sm">{clients.data?.map((c) => <li key={c.id} className="py-1.5">{c.name}</li>)}</ul>
+          <ul className="mb-3 divide-y text-sm">{clients.data?.map((c) => <ClientPpnRow key={c.id} client={c} />)}</ul>
           <div className="flex gap-2">
             <input className="input" placeholder="Nama pemberi kerja baru" value={clientName} onChange={(e) => setClientName(e.target.value)} />
             <button className="btn-primary" disabled={clientName.trim().length < 2 || addClient.isPending} onClick={() => addClient.mutate()}><Plus className="h-4 w-4" /></button>
@@ -120,5 +121,42 @@ export function MasterPage() {
         <Field label="Tahun"><input className="input" inputMode="numeric" value={pForm.year} onChange={(e) => setPForm({ ...pForm, year: e.target.value })} /></Field>
       </Modal>
     </div>
+  );
+}
+
+/** Nama client + PPN termin (override Setting global; ADMIN). Berlaku untuk termin yang dibuat setelahnya. */
+function ClientPpnRow({ client }: { client: Client }) {
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const [edit, setEdit] = useState(false);
+  const [v, setV] = useState(client.ppnRate != null ? ratioToPctInput(client.ppnRate) : '');
+  const [reason, setReason] = useState('');
+  const save = useMutation({
+    mutationFn: () => api(`/clients/${client.id}/ppn`, { method: 'PATCH', json: { ppnRate: v.trim() === '' ? null : pctInputToRatio(v), reason: reason || null } }),
+    onSuccess: async () => {
+      setEdit(false);
+      await qc.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+  return (
+    <li className="py-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span>{client.name}</span>
+        <span className="text-xs text-slate-500">
+          PPN termin: {client.ppnRate != null ? `${ratioToPctInput(client.ppnRate)}%` : 'ikut global'}
+          {can('ADMIN') && !edit && <button className="ml-2 text-brand hover:underline" onClick={() => setEdit(true)}>ubah</button>}
+        </span>
+      </div>
+      {edit && (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <input className="input w-24 py-1" inputMode="decimal" placeholder="global" value={v} onChange={(e) => setV(e.target.value)} aria-label={`PPN ${client.name}`} />
+          <input className="input w-48 py-1" placeholder="alasan" value={reason} onChange={(e) => setReason(e.target.value)} />
+          <button className="btn-primary px-2 py-1 text-xs" disabled={save.isPending} onClick={() => save.mutate()}>Simpan</button>
+          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setEdit(false)}>Batal</button>
+          <span className="w-full text-[11px] text-slate-500">Kosong = ikut global. Termin yang sudah ada tidak berubah.</span>
+          <ErrorBox error={save.error ? errorMessage(save.error) : null} />
+        </div>
+      )}
+    </li>
   );
 }

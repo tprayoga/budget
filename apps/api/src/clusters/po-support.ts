@@ -15,6 +15,7 @@ export function poDto(p: ClusterPo) {
     id: p.id,
     clusterId: p.clusterId,
     kind: p.kind,
+    subKind: p.subKind,
     poNumber: p.poNumber,
     poDate: p.poDate ? p.poDate.toISOString().slice(0, 10) : null,
     amount: s(p.amount)!,

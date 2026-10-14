@@ -333,3 +333,54 @@ describe('Import penyesuaian PO ADW (baris "Deduction Termin 1 + Addwork")', () 
     await srv.post('/api/import/po-adjustments-xlsx').set(auth).attach('file', Buffer.from('x'), 'RAB.xlsx').expect(403);
   });
 });
+
+describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayaran klien belum lengkap', () => {
+  it('PPN per client (ADMIN) meng-override global untuk termin baru; diaudit', async () => {
+    const ccsi = await ctx.prisma.client.findUniqueOrThrow({ where: { name: 'CCSI' } });
+    await ctx.api('pm').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: '0' }).expect(403);
+    await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: '0', reason: 'uji' }).expect(200);
+    const sem = await clusterId(ctx.prisma, 'CCSI', 'Padangsari RW 12 & 13 (Semarang)');
+    const po = await ctx.prisma.clusterPo.findFirstOrThrow({ where: { clusterId: sem, kind: 'PERMIT' } });
+    const t = await ctx.api('finance').post(`/clusters/${sem}/client-payments`, { poId: po.id, kind: 'PERMIT', termin: 9, amount: '1000' }).expect(201);
+    expect(t.body).toMatchObject({ ppnRate: '0', ppnAmount: '0.00' });
+    const log = await ctx.prisma.auditLog.findFirst({ where: { entity: 'Client', entityId: ccsi.id, field: 'alasan' }, orderBy: { at: 'desc' } });
+    expect(log?.newValue).toBe('uji');
+    await ctx.api('finance').del(`/client-payments/${t.body.id}`).expect(200);
+    await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: null }).expect(200);
+  });
+
+  it('referensi = DPP termin → usulan "cocok di DPP" (perlu konfirmasi pajak), tidak ikut terapkan otomatis', async () => {
+    const sem = await clusterId(ctx.prisma, 'CCSI', 'Padangsari RW 12 & 13 (Semarang)');
+    const c = await cluster(sem);
+    const ref = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:DPP', projectId: c.projectId, clusterId: sem, invoiceNo: 'INV-UJI-DPP', netAmount: '36000000', statusText: 'Unpaid', paid: false },
+    });
+    const list = await ctx.api('finance').get(`/clusters/${sem}/client-payments`).expect(200);
+    const r = list.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id);
+    expect(r.suggestion).toMatchObject({ mode: 'DPP', perluKonfirmasiPajak: true, kind: 'PERMIT', termin: 1, expectedNet: '36000000.00' });
+    const res = await ctx.api('finance').post(`/clusters/${sem}/client-payments/apply-matched`, { refIds: [ref.id] }).expect(201);
+    expect(res.body.applied).toEqual([]);
+    expect((await ctx.prisma.clientInvoiceRef.findUniqueOrThrow({ where: { id: ref.id } })).appliedPaymentId).toBeNull();
+    await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
+  });
+
+  it('pembayaran klien belum lengkap: UNBILLED cluster DONE / implementasi > 30 hari + termin ditagih tanpa tanggal; khusus FINANCE/ADMIN/DIREKTUR', async () => {
+    await ctx.api('pm').get('/client-payments/incomplete').expect(403);
+    const kal = await clusterId(ctx.prisma, 'CCSI', 'Kalawiran Kakas Barat (Manado)');
+    let res = await ctx.api('finance').get('/client-payments/incomplete').expect(200);
+    const ccsi = res.body.find((g: { projectCode: string }) => g.projectCode === 'CCSI');
+    const snd = ccsi.items.find((i: { clusterId: string; kind: string }) => i.clusterId === kal && i.kind === 'SND');
+    expect(snd.reasons).toContain('tanggal invoice belum diisi');
+    // cluster DONE → termin UNBILLED ikut
+    const wan = await clusterId(ctx.prisma, 'ADW', 'WANASARI RW 02 SUBANG');
+    const before = (await cluster(wan)).status;
+    await ctx.prisma.cluster.update({ where: { id: wan }, data: { status: 'DONE' } });
+    res = await ctx.api('finance').get(`/client-payments/incomplete?projectId=${(await cluster(wan)).projectId}`).expect(200);
+    const adw = res.body[0];
+    expect(adw.projectCode).toBe('ADW');
+    expect(adw.items.filter((i: { clusterId: string }) => i.clusterId === wan).map((i: { reasons: string[] }) => i.reasons[0])).toEqual(
+      expect.arrayContaining(['cluster selesai, termin belum ditagih']),
+    );
+    await ctx.prisma.cluster.update({ where: { id: wan }, data: { status: before } });
+  });
+});

@@ -162,6 +162,7 @@ ${
   <tr><td class="k">Beban bunga dana investor (${pct(fr.snapshot.interestRate).replace(',00', '')} × dana investor)</td><td class="r">${rp(fr.snapshot.infoBunga)}</td></tr>
   <tr><td class="k">Cadangan budget / retensi${fr.snapshot.retensiAsCost ? '' : ' (tidak dihitung sebagai biaya)'}</td><td class="r">${rp(fr.snapshot.infoRetensi)}</td></tr>
   <tr><td class="k">Proyeksi profit cluster</td><td class="r ${Number(fr.snapshot.infoProfit) < 0 ? 'neg' : ''}">${rp(fr.snapshot.infoProfit)}</td></tr>
+  <tr><td class="k">Batas cluster — sisa yang bisa diajukan (budget ${rp(fr.batasCluster.budget)} − terpakai ${rp(fr.batasCluster.terpakai)}${Number(fr.batasCluster.overPos) ? `, termasuk over di pos lain ${rp(fr.batasCluster.overPos)}` : ''})</td><td class="r ${fr.batasCluster.exceeded ? 'neg' : ''}">${rp(fr.batasCluster.sisaCluster)}</td></tr>
   <tr><td class="k">Margin profit</td><td class="r ${Number(fr.snapshot.infoMargin) < 0 ? 'neg' : ''}">${pct(fr.snapshot.infoMargin)}</td></tr>
 </table>
 

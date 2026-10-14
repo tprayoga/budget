@@ -243,19 +243,35 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="ringkasan-sisa">
-        <div className="card p-3"><div className="text-xs text-slate-500">Budget total</div><div className="text-lg font-semibold"><Money value={fr.total.budgetAmount} /></div></div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5" data-testid="ringkasan-sisa">
+        <div className="card p-3"><div className="text-xs text-slate-500">Budget cluster</div><div className="text-base font-semibold"><Money value={fr.batasCluster.budget} /></div></div>
         <div className="card p-3">
-          <div className="text-xs text-slate-500">Sudah terealisasi (dicairkan + di luar pengajuan)</div>
-          <div className="text-lg font-semibold"><Money value={fr.total.sudahTerpakai} /></div>
-          {Number(fr.total.realisasiTanpaPengajuan) > 0 && <div className="text-[11px] text-slate-500">termasuk realisasi di luar pengajuan <Money value={fr.total.realisasiTanpaPengajuan} /></div>}
+          <div className="text-xs text-slate-500">Sudah terpakai</div>
+          <div className="text-base font-semibold"><Money value={fr.batasCluster.terpakai} /></div>
+          {Number(fr.total.realisasiTanpaPengajuan) > 0 && <div className="text-[11px] text-slate-500">di luar pengajuan <Money value={fr.total.realisasiTanpaPengajuan} /></div>}
         </div>
-        <div className="card p-3"><div className="text-xs text-slate-500">Sisa yang bisa diajukan</div><div className="text-lg font-semibold text-brand"><Money value={fr.total.sisaTersedia} /></div></div>
+        <div className="card p-3">
+          <div className="text-xs text-slate-500">Over di pos lain</div>
+          <div className={cx('text-base font-semibold', Number(fr.batasCluster.overPos) > 0 && 'text-red-600')} data-testid="over-pos-lain"><Money value={fr.batasCluster.overPos} /></div>
+        </div>
+        <div className="card p-3">
+          <div className="text-xs text-slate-500">Sisa cluster yang bisa diajukan</div>
+          <div className="text-base font-semibold text-brand" data-testid="sisa-cluster"><Money value={fr.batasCluster.sisaCluster} /></div>
+        </div>
+        <div className={cx('card p-3', fr.batasCluster.exceeded && 'ring-2 ring-red-400')}>
+          <div className="text-xs text-slate-500">Diajukan</div>
+          <div className={cx('text-base font-semibold', fr.batasCluster.exceeded && 'text-red-600')} data-testid="diajukan-total"><Money value={fr.batasCluster.diajukan} /></div>
+        </div>
       </div>
+      {fr.batasCluster.exceeded && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+          Total diajukan melebihi sisa cluster <Money value={fr.batasCluster.sisaCluster} /> — kelebihan di pos yang over mengurangi ruang pos lain. Kurangi % cair.
+        </p>
+      )}
       <div className="card p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
           <span className="text-slate-600">Atur semua pos:</span>
-          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('sisa')}>Sisa budget</button>
+          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('sisa')} title="Sisa per pos, diskalakan ke sisa cluster bila ada pos yang over">Sisa budget</button>
           <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('half')}>50% dari sisa</button>
           <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('zero')}>0%</button>
           <span className={cx('ml-auto text-xs', patch.isPending ? 'text-amber-600' : 'text-slate-400')}>{patch.isPending ? 'Menghitung…' : 'Tersimpan otomatis'}</span>
@@ -337,7 +353,8 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
           </table>
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Sisa = budget − sudah dicairkan − realisasi di luar pengajuan − sedang diproses (pengajuan lain yang belum cair) − diajukan. {fr.terbilang}.
+          Sisa = budget − sudah dicairkan − realisasi di luar pengajuan − sedang diproses (pengajuan lain yang belum cair) − diajukan.
+          Total diajukan juga dibatasi sisa cluster (over di satu pos mengurangi ruang pos lain). {fr.terbilang}.
         </p>
         {invalid.length > 0 && <p className="mt-1 text-xs text-red-600">% cair harus angka 0–100.</p>}
         {fr.overBudgetCodes.length > 0 && <p className="mt-1 text-xs text-red-600">Ada pos yang melebihi sisa budget — kurangi % cair.</p>}

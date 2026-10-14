@@ -178,8 +178,28 @@ export interface FrTotals {
   sisaBudget: D;
 }
 
+/**
+ * Batas cluster: over di satu pos mengurangi ruang pengajuan seluruh cluster.
+ *   sisaCluster = Σ ROUND(budget pos) − Σ (sudahDicairkan + sedangDiproses + realisasiTanpaPengajuan) semua pos
+ * (Σ pembulatan per pos, sama dengan kolom Budget form; ROUND(Σ) bisa lebih kecil beberapa rupiah dan akan memotong
+ * pengajuan 100% — acuan A 7.708.170.)
+ * Validasi: Σ diajukan ≤ sisaCluster (dibulatkan ke bawah ke rupiah), selain batas per pos.
+ */
+export interface FrClusterLimit {
+  budget: D;
+  terpakai: D;
+  /** Σ kelebihan pos yang over (sisa pos < 0) — mengurangi ruang pos lain. */
+  overPos: D;
+  sisaCluster: D;
+  diajukan: D;
+  exceeded: boolean;
+  /** Σ diajukan dikurangi (pembulatan) agar tepat = sisa cluster. */
+  penyesuaian: boolean;
+}
+
 export interface FundRequestCalc {
   nilaiProyek: D;
+  cluster: FrClusterLimit;
   lines: FrLineResult[];
   subtotalA: FrTotals;
   subtotalB: FrTotals;
@@ -202,21 +222,84 @@ function totals(lines: FrLineResult[]): FrTotals {
   };
 }
 
+/** Batas langkah pembulatan per pos (0,01% × budget, min Rp 1). */
+const langkahPos = (budget: D) => D.max(budget.times('0.0001'), TOLERANSI_PEMBULATAN);
+
+function clusterBase(inputs: Pick<FrLineInput, 'budgetAmount' | 'sudahDicairkanSebelum' | 'sedangDiproses' | 'realisasiTanpaPengajuan'>[]) {
+  const budget = sum(inputs.map((i) => roundHalfUp(dec(i.budgetAmount), 0)));
+  const terpakai = sum(inputs.map((i) => dec(i.sudahDicairkanSebelum).plus(dec(i.sedangDiproses)).plus(dec(i.realisasiTanpaPengajuan))));
+  return { budget, terpakai, sisaCluster: budget.minus(terpakai) };
+}
+
 export function computeFundRequest(nilaiProyek: Num, inputs: FrLineInput[]): FundRequestCalc {
   const order = new Map(FR_CODES.map((c, i) => [c, i]));
   const lines = [...inputs]
     .sort((a, b) => (order.get(a.code) ?? 0) - (order.get(b.code) ?? 0))
     .map((l) => computeFrLine(l, nilaiProyek));
+  const base = clusterBase(inputs);
+  const limitRp = D.max(base.sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN);
+  // pembulatan per pos bisa membuat Σ diajukan sedikit melebihi batas cluster → dikurangi dari pos terbesar
+  let penyesuaian = false;
+  const diajukan0 = sum(lines.map((l) => l.diajukan));
+  const excess = diajukan0.minus(limitRp);
+  const toleransi = sum(lines.filter((l) => l.diajukan.gt(0)).map((l) => langkahPos(l.budgetAmount)));
+  if (excess.gt(0) && excess.lte(toleransi)) {
+    const big = [...lines].sort((x, y) => y.diajukan.comparedTo(x.diajukan))[0];
+    if (big && big.diajukan.gte(excess)) {
+      big.diajukan = big.diajukan.minus(excess);
+      big.sisaBudget = big.sisaBudget.plus(excess);
+      big.sisaSetelahProses = big.sisaSetelahProses.plus(excess);
+      big.overBudget = big.diajukan.gt(0) && big.sisaSetelahProses.isNegative() && !big.sisaSetelahProses.isZero();
+      big.penyesuaianPembulatan = true;
+      penyesuaian = true;
+    }
+  }
   const a = lines.filter((l) => l.section === 'A');
   const b = lines.filter((l) => l.section === 'B');
+  const total = totals(lines);
   return {
     nilaiProyek: dec(nilaiProyek),
+    cluster: {
+      budget: base.budget,
+      terpakai: base.terpakai,
+      overPos: sum(lines.map((l) => (l.sisaTersedia.isNegative() ? l.sisaTersedia.neg() : new D(0)))),
+      sisaCluster: base.sisaCluster,
+      diajukan: total.diajukan,
+      exceeded: total.diajukan.gt(0) && total.diajukan.gt(limitRp),
+      penyesuaian,
+    },
     lines,
     subtotalA: totals(a),
     subtotalB: totals(b),
-    total: totals(lines),
+    total,
     overBudgetCodes: lines.filter((l) => l.overBudget).map((l) => l.code),
   };
+}
+
+/**
+ * % cair default per pos (dipakai wizard & draft baru):
+ *  - tiap pos: sisa tersedia / budget (lihat frDefaultPctCair);
+ *  - bila Σ sisa pos positif (dibulatkan ke bawah ke rupiah) > sisa cluster, diskalakan proporsional agar Σ = sisa cluster:
+ *    target pos = floor(sisa pos × sisaCluster / Σ sisa pos), sisa receh ke pos terbesar; % = target / budget (12 desimal).
+ */
+export function frDefaultPcts(inputs: (Pick<FrLineInput, 'code' | 'budgetAmount' | 'sudahDicairkanSebelum' | 'sedangDiproses' | 'realisasiTanpaPengajuan'>)[]): Record<FrCode, D> {
+  const out = Object.fromEntries(inputs.map((i) => [i.code, frDefaultPctCair(i)])) as Record<FrCode, D>;
+  const avail = inputs.map((i) => {
+    const s = frSisaTersedia(i);
+    return { i, a: frHabis(s) || dec(i.budgetAmount).lte(0) ? new D(0) : s.toDecimalPlaces(0, D.ROUND_DOWN) };
+  });
+  const totalAvail = sum(avail.map((x) => x.a));
+  const limit = D.max(clusterBase(inputs).sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN);
+  if (totalAvail.lte(limit)) return out;
+  const targets = avail.map((x) => ({ ...x, t: totalAvail.isZero() ? new D(0) : x.a.times(limit).div(totalAvail).toDecimalPlaces(0, D.ROUND_DOWN) }));
+  const receh = limit.minus(sum(targets.map((x) => x.t)));
+  const biggest = [...targets].sort((x, y) => y.a.comparedTo(x.a))[0];
+  if (biggest) biggest.t = biggest.t.plus(receh);
+  for (const x of targets) {
+    const budget = dec(x.i.budgetAmount);
+    out[x.i.code] = budget.lte(0) ? new D(0) : x.t.div(budget).toDecimalPlaces(12, D.ROUND_DOWN);
+  }
+  return out;
 }
 
 /** Bentuk minimal pengajuan lain untuk menghitung sudahDicairkanSebelum / sedangDiproses / termin. */

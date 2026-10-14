@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import type { ClientInvoiceRef, ClientPayment, ClientPaymentStatus, Prisma, PrismaClient, TerminKind } from '@prisma/client';
 import {
   calcDueDate,
+  dec,
   generateTermins,
   matchReferenceToTermin,
   moneyStr,
@@ -9,6 +10,7 @@ import {
   PO_KIND_LABEL,
   sum,
   terminTax,
+  todayJakartaIso,
   type ApplyInvoiceRefInput,
   type ApplyMatchedRefsInput,
   type ClientPaymentUpdateInput,
@@ -119,6 +121,10 @@ function flat(p: ClientPayment | null) {
 }
 
 export interface RefSuggestion {
+  /** NET = net referensi = DPP + PPN − PPh termin; DPP = net referensi = DPP termin (tanpa PPN/PPh). */
+  mode: 'NET' | 'DPP';
+  /** Mode DPP: perlu konfirmasi pajak (mis. invoice tanpa PPN) — tidak ikut "Terapkan semua yang cocok". */
+  perluKonfirmasiPajak: boolean;
   paymentId: string;
   clusterId: string;
   clusterName: string;
@@ -149,18 +155,33 @@ export async function referenceMatches(db: Db, projectId: string) {
     const cands = payments
       .filter((p) => !taken.has(p.id) && (!r.clusterId || p.clusterId === r.clusterId))
       .map((p) => ({ id: p.id, termin: p.termin, expectedNet: paymentTax(p).expectedNet, p }));
-    const m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
+    let m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
+    let mode: 'NET' | 'DPP' = 'NET';
+    if (!m.match && !m.ambiguous) {
+      // mode kedua: net referensi = DPP termin (tanpa PPN/PPh) — hanya usulan, perlu konfirmasi pajak
+      const byDpp = matchReferenceToTermin(
+        { netAmount: r.netAmount?.toString() ?? null, termin: r.termin },
+        cands.map((c) => ({ ...c, expectedNet: c.p.amount.toString() })),
+      );
+      if (byDpp.match || byDpp.ambiguous) {
+        m = byDpp as typeof m;
+        mode = 'DPP';
+      }
+    }
     if (m.match) {
       taken.add(m.match.id);
+      const target = mode === 'DPP' ? dec(m.match.p.amount.toString()) : dec(m.match.expectedNet.toString());
       out.set(r.id, {
         suggestion: {
+          mode,
+          perluKonfirmasiPajak: mode === 'DPP',
           paymentId: m.match.id,
           clusterId: m.match.p.clusterId,
           clusterName: m.match.p.cluster.name,
           kind: m.match.p.kind,
           termin: m.match.termin,
-          expectedNet: moneyStr(m.match.expectedNet),
-          selisih: moneyStr(m.match.expectedNet.minus(r.netAmount!.toString())),
+          expectedNet: moneyStr(target),
+          selisih: moneyStr(target.minus(r.netAmount!.toString())),
         },
         ambiguous: false,
       });
@@ -343,7 +364,8 @@ export class ClientPaymentsService {
       const out: { refId: string; invoiceNo: string; paymentId: string; termin: number; kind: string }[] = [];
       for (const r of refs) {
         const m = matches.get(r.id)?.suggestion;
-        if (!m || m.clusterId !== clusterId || (input.refIds && !input.refIds.includes(r.id))) continue;
+        // mode DPP (perlu konfirmasi pajak) tidak pernah diterapkan lewat konfirmasi massal/usulan
+        if (!m || m.mode !== 'NET' || m.clusterId !== clusterId || (input.refIds && !input.refIds.includes(r.id))) continue;
         const before = await tx.clientPayment.findUniqueOrThrow({ where: { id: m.paymentId } });
         await this.applyRefTx(tx, user.id, before, r, null, input.paidDate);
         out.push({ refId: r.id, invoiceNo: r.invoiceNo, paymentId: m.paymentId, termin: m.termin, kind: m.kind });
@@ -352,6 +374,55 @@ export class ClientPaymentsService {
     });
     if (applied.length) await scanOverruns(this.prisma, [clusterId]);
     return { applied };
+  }
+
+  /**
+   * Halaman FINANCE "Pembayaran klien belum lengkap" — termin yang perlu dikejar input pembayaran aslinya:
+   *  - UNBILLED padahal cluster sudah DONE atau tanggal implementasi lewat 30 hari;
+   *  - INVOICED/PAID tanpa tanggal invoice, atau PAID tanpa tanggal diterima.
+   * Dikelompokkan per project.
+   */
+  async incomplete(user: AuthUser, projectId?: string) {
+    const today = new Date(`${todayJakartaIso()}T00:00:00Z`);
+    const cutoff = new Date(today.getTime() - 30 * 86_400_000);
+    const rows = await this.prisma.clientPayment.findMany({
+      where: {
+        cluster: { ...this.access.clusterWhere(user), status: { not: 'CANCELLED' }, ...(projectId ? { projectId } : {}) },
+        OR: [
+          { status: 'UNBILLED', cluster: { OR: [{ status: 'DONE' }, { implementationDate: { lte: cutoff } }] } },
+          { status: { in: ['INVOICED', 'PAID'] }, invoiceDate: null },
+          { status: 'PAID', paidDate: null },
+        ],
+      },
+      include: { cluster: { include: { project: true } }, po: true },
+      orderBy: [{ cluster: { project: { code: 'asc' } } }, { cluster: { sortOrder: 'asc' } }, { kind: 'asc' }, { termin: 'asc' }],
+    });
+    const reasonOf = (p: (typeof rows)[number]) => {
+      const r: string[] = [];
+      if (p.status === 'UNBILLED') {
+        if (p.cluster.status === 'DONE') r.push('cluster selesai, termin belum ditagih');
+        else r.push(`implementasi ${p.cluster.implementationDate?.toISOString().slice(0, 10)} lewat 30 hari, belum ditagih`);
+      }
+      if (p.status !== 'UNBILLED' && !p.invoiceDate) r.push('tanggal invoice belum diisi');
+      if (p.status === 'PAID' && !p.paidDate) r.push('tanggal diterima belum diisi');
+      return r;
+    };
+    const groups = new Map<string, { projectId: string; projectCode: string; items: unknown[]; total: ReturnType<typeof dec> }>();
+    for (const p of rows) {
+      const g = groups.get(p.cluster.projectId) ?? { projectId: p.cluster.projectId, projectCode: p.cluster.project.code, items: [], total: dec(0) };
+      g.items.push({
+        ...paymentDto(p),
+        clusterName: p.cluster.name,
+        clusterStatus: p.cluster.status,
+        implementationDate: p.cluster.implementationDate?.toISOString().slice(0, 10) ?? null,
+        poNumber: p.po?.poNumber ?? null,
+        poSubKind: p.po?.subKind ?? null,
+        reasons: reasonOf(p),
+      });
+      g.total = g.total.plus(p.amount.toString());
+      groups.set(p.cluster.projectId, g);
+    }
+    return [...groups.values()].map((g) => ({ ...g, count: g.items.length, total: moneyStr(g.total) }));
   }
 
   /** Expense PAJAK otomatis sebesar potongan pembayaran = DPP + PPN − diterima. */

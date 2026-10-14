@@ -105,6 +105,13 @@ export function FrSheet({ fr }: { fr: FrDetail }) {
             <TotalRow label="TOTAL PENGAJUAN" t={fr.total} strong />
           </tbody>
         </table>
+        {fr.batasCluster && (
+          <p className={cx('border-t px-4 py-2 text-xs', fr.batasCluster.exceeded ? 'bg-red-50 text-red-700' : 'text-slate-600')} data-testid="batas-cluster">
+            Batas cluster: sisa yang bisa diajukan <Money value={fr.batasCluster.sisaCluster} /> (budget <Money value={fr.batasCluster.budget} /> − terpakai{' '}
+            <Money value={fr.batasCluster.terpakai} />
+            {Number(fr.batasCluster.overPos) > 0 && <>, termasuk over di pos lain <Money value={fr.batasCluster.overPos} /></>}).
+          </p>
+        )}
         {Number(fr.total.realisasiTanpaPengajuan) > 0 && (
           <p className="border-t px-4 py-2 text-xs text-slate-600" data-testid="catatan-realisasi">
             * Sudah terpakai/dicairkan termasuk realisasi sebelum sistem / di luar pengajuan (<Money value={fr.total.realisasiTanpaPengajuan} />).

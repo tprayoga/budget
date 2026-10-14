@@ -35,6 +35,8 @@ export interface Me {
 export interface Client {
   id: string;
   name: string;
+  /** PPN termin untuk client ini (null = ikut Setting global) */
+  ppnRate?: string | null;
 }
 
 export interface Project {
@@ -124,6 +126,8 @@ export interface ClusterPo {
   id: string;
   clusterId: string;
   kind: PoKind;
+  /** CLUSTER / SUBFEEDER untuk PO implementasi yang dipecah */
+  subKind?: string | null;
   poNumber: string | null;
   poDate: string | null;
   amount: string;
@@ -239,8 +243,19 @@ export interface FrAttachment {
   createdAt: string;
 }
 
+export interface FrBatasCluster {
+  budget: string;
+  terpakai: string;
+  overPos: string;
+  sisaCluster: string;
+  diajukan: string;
+  exceeded: boolean;
+  penyesuaian: boolean;
+}
+
 export interface FrDetail {
   id: string;
+  batasCluster: FrBatasCluster;
   /** Draft dihitung ulang otomatis (mis. karena realisasi sebelumnya) — tampil sebagai banner. */
   recalcNote: string | null;
   number: string | null;
@@ -402,7 +417,7 @@ export interface ClientInvoiceRef {
   paid: boolean;
   appliedPaymentId: string | null;
   appliedAt: string | null;
-  suggestion: { paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
+  suggestion: { mode: 'NET' | 'DPP'; perluKonfirmasiPajak: boolean; paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
   ambiguous: boolean;
 }
 
@@ -464,4 +479,19 @@ export interface RealisasiSummary {
   kasDiterima: string;
   ppnTitipan?: string;
   profitRealisasi: string;
+}
+
+export interface IncompletePaymentGroup {
+  projectId: string;
+  projectCode: string;
+  count: number;
+  total: string;
+  items: (ClientPayment & {
+    clusterName: string;
+    clusterStatus: string;
+    implementationDate: string | null;
+    poNumber: string | null;
+    poSubKind: string | null;
+    reasons: string[];
+  })[];
 }

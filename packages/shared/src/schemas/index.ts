@@ -47,6 +47,12 @@ export const changePasswordSchema = z
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 export const clientSchema = z.object({ name: z.string().trim().min(2).max(120) });
+/** Tarif PPN termin per client (override Setting global; null = ikut global). Khusus ADMIN. */
+export const clientPpnSchema = z.object({
+  ppnRate: zRate.refine((v) => Number(v) >= 0 && Number(v) < 1, { message: 'Antara 0 dan 100%' }).nullable(),
+  reason: z.string().trim().max(300).nullish(),
+});
+export type ClientPpnInput = z.infer<typeof clientPpnSchema>;
 
 export const projectSchema = z.object({
   code: z

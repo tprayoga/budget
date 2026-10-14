@@ -3,6 +3,7 @@ import { useAuth } from './auth/AuthContext';
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { BukuKasPage } from './pages/BukuKasPage';
+import { IncompletePaymentsPage } from './pages/IncompletePaymentsPage';
 import { ChangePasswordPage } from './pages/ChangePasswordPage';
 import { ClusterPage } from './pages/ClusterPage';
 import { FundRequestDetailPage } from './pages/FundRequestDetailPage';
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/realisasi" element={<RealisasiPage />} />
         <Route path="/realisasi/cepat" element={<QuickExpensePage />} />
         <Route path="/buku-kas" element={<BukuKasPage />} />
+        <Route path="/pembayaran-klien" element={<IncompletePaymentsPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/master" element={<MasterPage />} />
         <Route path="/pengaturan" element={<SettingsPage />} />

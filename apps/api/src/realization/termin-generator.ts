@@ -11,14 +11,17 @@ export const TEMPLATE_PO_KINDS = ['IMPLEMENTASI', 'PERMIT'] as const;
 /** Jenis PO yang mengoreksi termin 1 PO implementasi (tidak punya termin sendiri). */
 export const ADJUSTMENT_PO_KINDS = ['ADDWORK', 'DEDUCTION'] as const;
 
-/** Tarif default termin baru: PPN dari Setting (project → global, default 0,11), PPh = pajakRate cluster. */
+/**
+ * Tarif default termin baru. PPN: Setting project → Client.ppnRate → Setting global → 0,11.
+ * PPh = pajakRate cluster.
+ */
 export async function terminTaxDefaults(db: Db, clusterId: string) {
-  const c = await db.cluster.findUniqueOrThrow({ where: { id: clusterId } });
+  const c = await db.cluster.findUniqueOrThrow({ where: { id: clusterId }, include: { project: { include: { client: true } } } });
   const [own, global] = await Promise.all([
     db.setting.findUnique({ where: { projectId: c.projectId } }),
     db.setting.findFirst({ where: { projectId: null } }),
   ]);
-  return { ppnRate: rate((own?.ppnRate ?? global?.ppnRate ?? '0.11').toString()), pphRate: c.pajakRate };
+  return { ppnRate: rate((own?.ppnRate ?? c.project.client.ppnRate ?? global?.ppnRate ?? '0.11').toString()), pphRate: c.pajakRate };
 }
 
 /** PO implementasi utama (yang pertama dibuat) — penerima koreksi addwork/deduction. */

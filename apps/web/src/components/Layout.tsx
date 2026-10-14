@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, FileText, Inbox, LayoutGrid, LogOut, Menu, Receipt, Settings, Upload, Database, X } from 'lucide-react';
+import { Wallet, BookOpen, FileText, Inbox, LayoutGrid, LogOut, Menu, Receipt, Settings, Upload, Database, X } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { ROLE_LABEL } from '@indotek/shared';
@@ -48,6 +48,7 @@ export function Layout() {
     { to: '/inbox', label: 'Inbox Approval', icon: Inbox, show: true, badge: count, warn: missingCount },
     { to: '/realisasi', label: 'Realisasi', icon: Receipt, show: true, badge: can('FINANCE') ? pending.data?.count : undefined },
     { to: '/buku-kas', label: 'Buku Kas', icon: BookOpen, show: can('ADMIN', 'FINANCE', 'DIREKTUR', 'PM') },
+    { to: '/pembayaran-klien', label: 'Pembayaran klien', icon: Wallet, show: can('ADMIN', 'FINANCE', 'DIREKTUR') },
     { to: '/import', label: 'Import Excel', icon: Upload, show: can('ADMIN', 'PM', 'FINANCE') },
     { to: '/master', label: 'Data Master', icon: Database, show: can('ADMIN', 'PM') },
     { to: '/pengaturan', label: 'Pengaturan', icon: Settings, show: true },

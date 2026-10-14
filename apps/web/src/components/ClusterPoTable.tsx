@@ -88,7 +88,7 @@ export function ClusterPoTable({ clusterId, pos, editable }: { clusterId: string
           <tbody>
             {pos.map((p) => (
               <tr key={p.id} className="border-t">
-                <td className="td"><span className={cx('rounded px-1.5 py-0.5 text-xs font-semibold', p.kind === 'DEDUCTION' ? 'bg-red-50 text-red-700' : p.kind === 'IMPLEMENTASI' ? 'bg-brand-100 text-brand' : 'bg-slate-100 text-slate-700')}>{PO_KIND_LABEL[p.kind]}</span></td>
+                <td className="td"><span className={cx('rounded px-1.5 py-0.5 text-xs font-semibold', p.kind === 'DEDUCTION' ? 'bg-red-50 text-red-700' : p.kind === 'IMPLEMENTASI' ? 'bg-brand-100 text-brand' : 'bg-slate-100 text-slate-700')}>{PO_KIND_LABEL[p.kind]}{p.subKind ? ` · ${p.subKind === 'SUBFEEDER' ? 'Subfeeder' : 'Cluster'}` : ''}</span></td>
                 <td className="td">{p.poNumber ?? <span className="text-slate-400">—</span>}</td>
                 <td className="td">{p.poDate ? formatTanggal(p.poDate) : <span className="text-slate-400">—</span>}</td>
                 <td className="td num"><Money value={p.amount} /></td>

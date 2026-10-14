@@ -196,8 +196,11 @@ test('Wizard pengajuan memperhitungkan realisasi di luar pengajuan (Karondoran)'
   await page.getByRole('option', { name: /Karondoran Langowan Timur/ }).click();
   await page.getByRole('button', { name: /Buat draft/ }).click();
   const ringkasan = page.getByTestId('ringkasan-sisa');
-  await expect(ringkasan).toContainText('Budget total');
-  await expect(ringkasan).toContainText('Sisa yang bisa diajukan');
+  await expect(ringkasan).toContainText('Budget cluster');
+  await expect(ringkasan).toContainText('Sisa cluster yang bisa diajukan');
+  // Karondoran: over di pos lain mengurangi ruang cluster → default diajukan = sisa cluster
+  await expect(page.getByTestId('over-pos-lain')).not.toHaveText('Rp 0');
+  await expect(page.getByTestId('diajukan-total')).toHaveText((await page.getByTestId('sisa-cluster').textContent())!);
   const permit = page.getByTestId('fr-line-PERMIT');
   await expect(permit.getByTestId('badge-habis')).toBeVisible();
   await expect(permit.getByLabel(/% cair/)).toBeDisabled();

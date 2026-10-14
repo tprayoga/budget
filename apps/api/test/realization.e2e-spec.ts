@@ -646,3 +646,26 @@ describe('Acuan T — wizard pengajuan memperhitungkan realisasi tanpa pengajuan
     expect(list.body.every((e: { fundRequest: unknown; budgetCode: string }) => e.fundRequest === null && e.budgetCode === 'PERMIT')).toBe(true);
   });
 });
+
+describe('Acuan U — batas cluster (Kalawiran): over di pos lain mengurangi ruang pengajuan', () => {
+  it('default total = sisa cluster; melebihi batas cluster → 409 (PM), ADMIN override dengan alasan', async () => {
+    const kal = await clusterId(ctx.prisma, 'CCSI', 'Kalawiran Kakas Barat (Manado)');
+    const fr = await ctx.api('pm').post('/fund-requests', { clusterId: kal }).expect(201);
+    const b = fr.body.batasCluster;
+    expect(Number(b.overPos)).toBeGreaterThan(0);
+    expect(Number(b.sisaCluster)).toBe(Math.floor(Number(b.budget) - Number(b.terpakai)));
+    expect(Number(b.sisaCluster)).toBeLessThan(Number(fr.body.total.sisaTersedia));
+    expect(fr.body.total.diajukan).toBe(b.sisaCluster);
+    expect(b.exceeded).toBe(false);
+    // ajukan seluruh sisa pos SUBCON (tanpa skala) → total melebihi sisa cluster
+    const subcon = fr.body.lines.find((l: { budgetCode: string }) => l.budgetCode === 'SUBCON');
+    const pct = (Number(subcon.sisaTersedia) / Number(subcon.budgetAmount)).toFixed(4);
+    const over = await ctx.api('pm').patch(`/fund-requests/${fr.body.id}`, { lines: [{ budgetCode: 'SUBCON', pctCair: pct }] }).expect(200);
+    expect(over.body.batasCluster.exceeded).toBe(true);
+    expect(over.body.overBudgetCodes).toEqual([]);
+    const res = await ctx.api('pm').post(`/fund-requests/${fr.body.id}/submit`).expect(409);
+    expect(res.body.message).toMatch(/Batas cluster/);
+    await ctx.api('pm').post(`/fund-requests/${fr.body.id}/submit`, { override: true, overrideReason: 'x' }).expect(403);
+    await ctx.api('pm').del(`/fund-requests/${fr.body.id}`).expect(200);
+  });
+});

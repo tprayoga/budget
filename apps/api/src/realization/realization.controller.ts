@@ -93,6 +93,13 @@ export class RealizationController {
     return this.payments.update(user, id, body);
   }
 
+  /** Halaman FINANCE "Pembayaran klien belum lengkap". */
+  @Get('client-payments/incomplete')
+  @Roles('ADMIN', 'FINANCE', 'DIREKTUR')
+  incompletePayments(@CurrentUser() user: AuthUser, @Query('projectId') projectId?: string) {
+    return this.payments.incomplete(user, projectId || undefined);
+  }
+
   /** Konfirmasi FINANCE: terapkan semua referensi RAB yang cocok (net = expectedNet ± Rp 10) di cluster ini. */
   @Post('clusters/:id/client-payments/apply-matched')
   @Roles('ADMIN', 'FINANCE')

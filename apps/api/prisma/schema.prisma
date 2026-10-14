@@ -137,6 +137,8 @@ model RefreshToken {
 model Client {
   id        String    @id @default(cuid())
   name      String    @unique
+  /// Tarif PPN termin klien untuk client ini (override Setting global; project setting tetap lebih tinggi). null = ikut global
+  ppnRate   Decimal? @db.Decimal(16, 12)
   createdAt DateTime  @default(now())
   projects  Project[]
   terminTemplates TerminTemplate[]
@@ -708,6 +710,8 @@ model ClusterPo {
   id              String          @id @default(cuid())
   clusterId       String
   kind            PoKind
+  /// Sub-jenis PO implementasi: CLUSTER / SUBFEEDER (null = tunggal)
+  subKind         String?
   poNumber        String?
   poDate          DateTime?       @db.Date
   /// DEDUCTION bernilai negatif

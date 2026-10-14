@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, Param, Patch, Post, ConflictException } from '@nestjs/common';
 import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
-import { clientSchema } from '@indotek/shared';
+import { clientPpnSchema, clientSchema, type ClientPpnInput } from '@indotek/shared';
+import { rate, s } from '../common/decimal';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CurrentUser, EDITOR_ROLES, Roles } from '../auth/decorators';
@@ -37,6 +38,20 @@ export class ClientsController {
     const before = await this.prisma.client.findUniqueOrThrow({ where: { id } });
     const c = await this.prisma.client.update({ where: { id }, data: body });
     await this.audit.diff(this.prisma, user.id, 'Client', id, { name: before.name }, { name: c.name });
+    return c;
+  }
+
+  /**
+   * PPN termin untuk client ini (override Setting global, berlaku untuk termin yang dibuat setelahnya;
+   * termin yang sudah ada tidak diubah otomatis). Khusus ADMIN, diaudit dengan alasan.
+   */
+  @Patch(':id/ppn')
+  @Roles('ADMIN')
+  @ApiZodBody(clientPpnSchema)
+  async setPpn(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(clientPpnSchema) body: ClientPpnInput) {
+    const before = await this.prisma.client.findUniqueOrThrow({ where: { id } });
+    const c = await this.prisma.client.update({ where: { id }, data: { ppnRate: body.ppnRate === null ? null : rate(body.ppnRate) } });
+    await this.audit.diff(this.prisma, user.id, 'Client', id, { ppnRate: s(before.ppnRate), alasan: null }, { ppnRate: s(c.ppnRate), alasan: body.reason ?? null });
     return c;
   }
 

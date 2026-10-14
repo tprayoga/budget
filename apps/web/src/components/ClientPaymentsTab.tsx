@@ -21,7 +21,8 @@ export function MissingDateBadge({ what = 'invoice' }: { what?: 'invoice' | 'pai
 }
 
 function poTitle(po: ClusterPo | undefined, kind: PoKind) {
-  return `PO ${PO_KIND_LABEL[po?.kind ?? kind]}${po?.poNumber ? ` · ${po.poNumber}` : ''}`;
+  const sub = po?.subKind ? ` ${po.subKind === 'SUBFEEDER' ? 'Subfeeder' : 'Cluster'}` : '';
+  return `PO ${PO_KIND_LABEL[po?.kind ?? kind]}${sub}${po?.poNumber ? ` · ${po.poNumber}` : ''}`;
 }
 
 type Recalc = {
@@ -120,7 +121,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
   if (q.isLoading) return <Spinner />;
   if (q.error) return <ErrorBox error={q.error} />;
   const { payments, templates, pos, invoiceRefs, missingInvoiceDate, totals } = q.data!;
-  const matched = invoiceRefs.filter((r) => !r.appliedPaymentId && r.suggestion?.clusterId === clusterId);
+  const matched = invoiceRefs.filter((r) => !r.appliedPaymentId && r.suggestion?.clusterId === clusterId && r.suggestion.mode === 'NET');
   const today = todayJakartaIso();
   const aging = (kind: string) => templates.find((t) => t.kind === kind);
   const groups = [
@@ -250,7 +251,12 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                   <td className="td">{r.dueDate ? formatTanggal(r.dueDate) : '—'}</td>
                   <td className="td"><span className={cx('rounded px-1.5 py-0.5 text-xs', r.paid ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600')}>{r.statusText ?? '—'}</span></td>
                   <td className="td whitespace-normal text-xs" data-testid="ref-suggestion">
-                    {r.appliedPaymentId ? null : r.suggestion ? (
+                    {r.appliedPaymentId ? null : r.suggestion?.mode === 'DPP' ? (
+                      <span className="text-amber-700" data-testid="cocok-dpp">
+                        <b>cocok di DPP</b> → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
+                        <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold">perlu konfirmasi pajak</span>
+                      </span>
+                    ) : r.suggestion ? (
                       <span className="text-emerald-700">
                         <b>cocok</b> → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
                         {r.suggestion.selisih !== '0.00' && <span className="text-slate-500"> (selisih {formatAngka(r.suggestion.selisih, 2)})</span>}
@@ -262,7 +268,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                     )}
                   </td>
                   <td className="td whitespace-nowrap text-right">
-                    {editable && !r.appliedPaymentId && r.suggestion?.clusterId === clusterId && (
+                    {editable && !r.appliedPaymentId && r.suggestion?.clusterId === clusterId && r.suggestion.mode === 'NET' && (
                       <button className="btn-primary mr-1 px-2 py-1 text-xs" disabled={applyMatched.isPending} onClick={() => applyMatched.mutate([r.id])}>
                         Konfirmasi
                       </button>
