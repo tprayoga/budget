@@ -5,6 +5,11 @@ const root = path.resolve(__dirname, '..');
 export const E2E_DB = 'postgresql://indotek:indotek@localhost:5432/indotek_budget_e2e?schema=public';
 const API_PORT = 3100;
 const WEB_PORT = 5174;
+/**
+ * E2E_BASE_URL diisi → uji terhadap stack yang sudah berjalan (mis. stack production lokal https://localhost:8444,
+ * DB baru ber-seed ALLOW_DEMO_SEED). Server dev tidak dijalankan.
+ */
+const EXTERNAL = process.env.E2E_BASE_URL;
 
 export default defineConfig({
   testDir: '.',
@@ -14,14 +19,15 @@ export default defineConfig({
   workers: 1,
   reporter: [['list'], ['html', { outputFolder: 'report', open: 'never' }]],
   use: {
-    baseURL: `http://localhost:${WEB_PORT}`,
+    baseURL: EXTERNAL ?? `http://localhost:${WEB_PORT}`,
+    ignoreHTTPSErrors: !!EXTERNAL,
     locale: 'id-ID',
     timezoneId: 'Asia/Jakarta',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],
-  webServer: [
+  webServer: EXTERNAL ? [] : [
     {
       // Database e2e terpisah: reset + migrasi + seed (import file contoh), lalu jalankan API
       command:

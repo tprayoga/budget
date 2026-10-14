@@ -78,7 +78,7 @@ async function main() {
     else if (!ROLES.includes(role)) errors.push(`baris ${line}: role "${r[col('role')]}" tidak dikenal (${ROLES.join('/')})`);
     else if (role === 'INVESTOR' && !codes.length) errors.push(`baris ${line}: INVESTOR wajib punya kolom projects`);
     else if (codes.some((c) => !projects.has(c))) errors.push(`baris ${line}: project ${codes.filter((c) => !projects.has(c)).join(', ')} tidak ada`);
-    else if (await prisma.user.findUnique({ where: { email } })) console.log(`lewati (sudah ada): ${email}`);
+    else if (await prisma.user.findUnique({ where: { email } })) console.error(`lewati (sudah ada): ${email}`);
     else {
       const password = randomPassword();
       const user = await prisma.user.create({
@@ -90,11 +90,17 @@ async function main() {
       created++;
     }
   }
-  if (created) {
-    await writeFile(out, `${result.join('\n')}\n`, { mode: 0o600 });
-    await chmod(out, 0o600);
+  if (out === '-') {
+    // stdout = CSV hasil (dialihkan wrapper ke file chmod 600); pesan lain ke stderr
+    if (created) process.stdout.write(`${result.join('\n')}\n`);
+    console.error(`Akun dibuat: ${created}.`);
+  } else {
+    if (created) {
+      await writeFile(out, `${result.join('\n')}\n`, { mode: 0o600 });
+      await chmod(out, 0o600);
+    }
+    console.log(`Akun dibuat: ${created}. ${created ? `Password awal di ${out} (chmod 600) — bagikan lewat kanal aman, lalu HAPUS file ini.` : ''}`);
   }
-  console.log(`Akun dibuat: ${created}. ${created ? `Password awal di ${out} (chmod 600) — bagikan lewat kanal aman, lalu HAPUS file ini.` : ''}`);
   if (errors.length) {
     console.error(`Baris ditolak:\n - ${errors.join('\n - ')}`);
     process.exitCode = 1;

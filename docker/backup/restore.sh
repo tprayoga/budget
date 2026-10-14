@@ -16,4 +16,6 @@ if [ -n "$UP" ]; then
   find /uploads -mindepth 1 -delete
   cp -a "$UP"/. /uploads/
 fi
+# API berjalan sebagai uid 1000 (node) — harus bisa menulis ke subfolder upload yang dipulihkan
+chown -R 1000:1000 /uploads
 echo "{\"level\":\"info\",\"msg\":\"restore selesai\",\"snapshot\":\"${SNAP}\"}"

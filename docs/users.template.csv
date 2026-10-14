@@ -1,0 +1,6 @@
+nama,email,role,jabatan,projects
+"Nama Admin",admin.kedua@contoh.co.id,ADMIN,Administrator Sistem,
+"Nama Project Manager",pm@contoh.co.id,PM,Project Manager,
+"Nama Finance",finance@contoh.co.id,FINANCE,Finance,
+"Nama Direktur",direktur@contoh.co.id,DIREKTUR,Direktur Utama,
+"Nama Investor",investor@contoh.co.id,INVESTOR,Investor,ADW;EVANTAMA
