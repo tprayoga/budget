@@ -8,6 +8,6 @@
     "sourceMap": false,
     "declaration": false
   },
-  "include": ["prisma/seed.ts", "scripts/create-users.ts", "scripts/reset-password.ts", "scripts/rekap-snapshot.ts", "scripts/migration-cleanup.ts", "scripts/user-status.ts", "src/**/*.ts"],
+  "include": ["prisma/seed.ts", "scripts/create-users.ts", "scripts/reset-password.ts", "scripts/rekap-snapshot.ts", "scripts/migration-cleanup.ts", "scripts/user-status.ts", "scripts/scan-overruns.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "dist", "dist-scripts", "test", "**/*.spec.ts"]
 }

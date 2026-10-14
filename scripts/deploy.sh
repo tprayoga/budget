@@ -40,6 +40,8 @@ DOMAIN=$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2-)
 HTTPS_PORT=$(grep -E '^HTTPS_PORT=' "$ENV_FILE" | cut -d= -f2- || true)
 HEALTH_URL="https://${DOMAIN}${HTTPS_PORT:+:$HTTPS_PORT}/api/health"
 [ "${HTTPS_PORT:-443}" = 443 ] && HEALTH_URL="https://${DOMAIN}/api/health"
+ACME_CA=$(grep -E '^ACME_CA=' "$ENV_FILE" | cut -d= -f2- || true)
+case "$ACME_CA" in *staging*) CURL_INSECURE=1; echo "CATATAN: ACME_CA = Let's Encrypt STAGING — health check melewati verifikasi sertifikat (ganti ke production: RUNBOOK §3.4)" ;; esac
 dc() { ENV_FILE="$ENV_FILE" TAG="$1" docker compose -p "$PROJECT" -f docker-compose.prod.yml --env-file "$ENV_FILE" "${@:2}"; }
 log() { echo "[$(date '+%F %T')] $*"; }
 

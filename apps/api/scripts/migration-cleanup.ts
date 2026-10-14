@@ -5,7 +5,7 @@
  * Keputusan user (Fase 4, 1a–1c):
  *  - user sistem "Migrasi Sistem" (nonaktif, tidak bisa login)
  *  - dihapus: semua FundRequest (+ baris, approval, lampiran, file), FpdSequence, Expense MANUAL/MOBILE/WEBHOOK
- *    (+ alokasi, file), Notification, ApiKey, RefreshToken, ProjectMember milik akun demo
+ *    (+ alokasi, file), Notification, OverrunState, ApiKey, RefreshToken, ProjectMember milik akun demo
  *  - field pelaku pada data ASLI yang merujuk akun demo → "Migrasi Sistem"; AuditLog TIDAK diubah
  *  - akun demo yang masih dirujuk AuditLog → dianonimkan (nonaktif, "Akun demo (dihapus)", email & password acak);
  *    yang tidak dirujuk → dihapus
@@ -65,6 +65,9 @@ export async function migrationCleanup(prisma: PrismaClient, apply: boolean) {
     add('FundRequest', 'dihapus (semua)', (await tx.fundRequest.deleteMany({})).count);
     add('FpdSequence', 'dihapus (penomoran FPD mulai dari 001)', (await tx.fpdSequence.deleteMany({})).count);
     add('Notification', 'dihapus', (await tx.notification.deleteMany({})).count);
+    // status lintasan over budget dikosongkan → pemindaian pertama di production (setelah akun PM & Direktur dibuat)
+    // mengirim ringkasan kondisi terkini (keputusan user, persetujuan dry-run migrasi)
+    add('OverrunState', 'dihapus (pemindaian pertama di production mengirim ringkasan terkini)', (await tx.overrunState.deleteMany({})).count);
     add('ApiKey', 'dihapus', (await tx.apiKey.deleteMany({})).count);
     add('RefreshToken', 'dihapus (semua sesi)', (await tx.refreshToken.deleteMany({})).count);
     add('ProjectMember', 'dihapus (milik akun demo)', (await tx.projectMember.deleteMany({ where: { userId: { in: demoIds } } })).count);

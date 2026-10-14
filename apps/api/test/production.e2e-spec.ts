@@ -165,3 +165,22 @@ describe('create-users CSV', () => {
     expect(randomPassword()).not.toBe(p);
   });
 });
+
+describe('Pemindaian over budget tanpa penerima (production baru dimigrasi)', () => {
+  it('belum ada PM/Direktur aktif → status lintasan tidak dicatat; setelah ada penerima → ringkasan terkirim', async () => {
+    const { scanOverruns } = await import('../src/notifications/overrun');
+    const id = (await ctx.prisma.cluster.findFirstOrThrow({ where: { name: 'SINDANG RW 02 MAJALENGKA' } })).id;
+    const e = await ctx.api('finance').post('/expenses', { clusterId: id, date: '2026-10-15', category: 'TICKET', description: 'Uji penerima', amount: '1000' }).expect(201);
+    const roles = await ctx.prisma.user.findMany({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true }, select: { id: true } });
+    await ctx.prisma.overrunState.deleteMany({ where: { clusterId: id } });
+    await ctx.prisma.user.updateMany({ where: { id: { in: roles.map((r) => r.id) } }, data: { active: false } });
+    const r1 = await scanOverruns(ctx.prisma, [id]);
+    expect(r1).toMatchObject({ notifications: 0, noRecipients: true });
+    expect(await ctx.prisma.overrunState.count({ where: { clusterId: id, over: true } })).toBe(0);
+    await ctx.prisma.user.updateMany({ where: { id: { in: roles.map((r) => r.id) } }, data: { active: true } });
+    const r2 = await scanOverruns(ctx.prisma, [id]);
+    expect(r2.crossedPos).toBeGreaterThan(0);
+    expect(await ctx.prisma.overrunState.count({ where: { clusterId: id, code: 'TICKET', over: true } })).toBe(1);
+    await ctx.api('finance').del(`/expenses/${e.body.id}`).expect(200);
+  });
+});

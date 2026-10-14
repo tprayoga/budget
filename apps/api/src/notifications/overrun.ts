@@ -117,12 +117,15 @@ async function scanOverrunsUnlocked(db: Db, clusterIds?: string[]) {
 
   const crossed = items.filter((i) => !byKey.get(overrunKey(i.clusterId, i.code))?.over);
   if (!crossed.length) return { over: items.length, crossedTotal: 0, crossedPos: 0, notifications: 0 };
+  const users = await db.user.findMany({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true }, select: { id: true } });
+  // Belum ada penerima (mis. production baru dimigrasi, akun PM/Direktur belum dibuat): status lintasan TIDAK dicatat,
+  // agar pemindaian pertama setelah penerima ada tetap mengirim ringkasan kondisi terkini.
+  if (!users.length) return { over: items.length, crossedTotal: 0, crossedPos: 0, notifications: 0, noRecipients: true };
   const now = new Date();
   for (const i of crossed) {
     const key = overrunKey(i.clusterId, i.code);
     await db.overrunState.upsert({ where: { key }, create: { key, clusterId: i.clusterId, code: i.code, over: true, since: now }, update: { over: true, since: now } });
   }
-  const users = await db.user.findMany({ where: { role: { in: ['PM', 'DIREKTUR'] }, active: true }, select: { id: true } });
   let notifications = 0;
 
   const totals = crossed.filter((i) => i.code === 'TOTAL');

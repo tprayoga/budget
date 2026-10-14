@@ -10,6 +10,8 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, chmod } from 'node:fs/promises';
 import { AuditService } from '../src/audit/audit.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
+import { scanOverruns } from '../src/notifications/overrun';
+import { closeRedis } from '../src/redis/redis';
 
 const ROLES: Role[] = ['ADMIN', 'PM', 'FINANCE', 'DIREKTUR', 'INVESTOR'];
 
@@ -67,6 +69,7 @@ async function main() {
   const result: string[] = ['nama,email,role,password_awal'];
   const errors: string[] = [];
   let created = 0;
+  const createdRoles: Role[] = [];
   for (const [i, r] of rows.entries()) {
     const line = i + 2;
     const name = r[col('nama')];
@@ -87,6 +90,7 @@ async function main() {
       for (const c of codes) await prisma.projectMember.create({ data: { userId: user.id, projectId: projects.get(c)!.id } });
       await audit.diff(prisma, null, 'User', user.id, null, { email, role, projects: codes.join(';') || null, sumber: 'create-users CSV' });
       result.push(`"${name.replace(/"/g, '""')}",${email},${role},${password}`);
+      createdRoles.push(role);
       created++;
     }
   }
@@ -101,11 +105,17 @@ async function main() {
     }
     console.log(`Akun dibuat: ${created}. ${created ? `Password awal di ${out} (chmod 600) — bagikan lewat kanal aman, lalu HAPUS file ini.` : ''}`);
   }
+  // akun PM/Direktur baru → pemindaian over budget (ringkasan kondisi terkini bila belum pernah terkirim)
+  if (createdRoles.some((r) => r === 'PM' || r === 'DIREKTUR')) {
+    const scan = await scanOverruns(prisma);
+    console.error(`Pemindaian over budget: ${scan.over} pos/cluster over, ${scan.crossedTotal} total cluster (notifikasi langsung), ${scan.crossedPos} pos (ringkasan harian), ${scan.notifications} notifikasi baru`);
+  }
   if (errors.length) {
     console.error(`Baris ditolak:\n - ${errors.join('\n - ')}`);
     process.exitCode = 1;
   }
   await prisma.$disconnect();
+  await closeRedis();
 }
 
 if (require.main === module) {

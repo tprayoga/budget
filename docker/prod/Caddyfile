@@ -2,8 +2,8 @@
 # DOMAIN=localhost → sertifikat CA lokal Caddy (self-signed) untuk uji di mesin sendiri.
 {
 	email {$ACME_EMAIL}
-	# ACME_CA opsional, mis. staging Let's Encrypt saat uji coba pertama:
-	# https://acme-staging-v02.api.letsencrypt.org/directory
+	# ACME_CA dari .env.production: deploy pertama STAGING, lalu ganti ke production (RUNBOOK §3.4).
+	# DOMAIN=localhost selalu memakai CA lokal Caddy (tanpa ACME).
 	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
 	servers {
 		trusted_proxies static private_ranges
