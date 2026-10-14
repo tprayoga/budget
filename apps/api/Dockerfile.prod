@@ -1,0 +1,70 @@
+# syntax=docker/dockerfile:1.7
+# API production — multi-stage, user non-root, Chromium untuk PDF. Build dari root repo:
+#   docker build -f apps/api/Dockerfile.prod --build-arg GIT_SHA=$(git rev-parse --short HEAD) -t indotek-api:<sha> .
+ARG NODE_IMAGE=node:22.23.3-bookworm-slim
+
+# ---- 1. build: semua dependency + kompilasi shared, api, script server
+FROM ${NODE_IMAGE} AS build
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/api/package.json apps/api/
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN pnpm install --frozen-lockfile --filter "@indotek/api..."
+COPY packages/shared packages/shared
+COPY apps/api apps/api
+RUN pnpm --filter @indotek/shared build \
+ && pnpm --filter @indotek/api build \
+ && pnpm --filter @indotek/api build:scripts
+
+# ---- 2. prod-deps: hanya dependency production + Prisma Client ter-generate
+FROM ${NODE_IMAGE} AS prod-deps
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/api/package.json apps/api/
+COPY apps/api/prisma/schema.prisma apps/api/prisma/schema.prisma
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN pnpm install --frozen-lockfile --prod --filter "@indotek/api..." \
+ && cd apps/api && ./node_modules/.bin/prisma generate
+
+# ---- 3. runtime
+FROM ${NODE_IMAGE} AS runtime
+ARG GIT_SHA=dev
+LABEL org.opencontainers.image.title="indotek-api" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.source="https://github.com/{{GHCR_OWNER}}/indotek-budget"
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium fonts-dejavu-core fonts-liberation openssl ca-certificates tini tzdata \
+ && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production \
+    TZ=Asia/Jakarta \
+    APP_VERSION=${GIT_SHA} \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    UPLOAD_DIR=/app/storage/uploads \
+    SAMPLE_BUDGET_XLSX=/app/docs/samples/Budget_Per_Cluster_ADW_Evantama_CCSI.sample.xlsx \
+    API_PORT=3000
+WORKDIR /app
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=node:node /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=prod-deps --chown=node:node /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build --chown=node:node /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=build --chown=node:node /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build --chown=node:node /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build --chown=node:node /app/apps/api/dist ./apps/api/dist
+COPY --from=build --chown=node:node /app/apps/api/dist-scripts ./apps/api/dist-scripts
+COPY --from=build --chown=node:node /app/apps/api/prisma ./apps/api/prisma
+# file contoh (tersanitasi) — hanya dipakai seed stack UJI (ALLOW_DEMO_SEED=true)
+COPY --chown=node:node docs/samples ./docs/samples
+RUN mkdir -p /app/storage/uploads && chown -R node:node /app/storage
+USER node
+WORKDIR /app/apps/api
+EXPOSE 3000
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/usr/bin/tini", "--"]
+# Migrasi & seed TIDAK dijalankan saat start — dijalankan deploy.sh sekali per rilis
+CMD ["node", "dist/main.js"]

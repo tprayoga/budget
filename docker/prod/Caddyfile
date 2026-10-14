@@ -1,0 +1,52 @@
+# Caddy production: HTTPS otomatis (Let's Encrypt) untuk {$DOMAIN}.
+# DOMAIN=localhost → sertifikat CA lokal Caddy (self-signed) untuk uji di mesin sendiri.
+{
+	email {$ACME_EMAIL}
+	# ACME_CA opsional, mis. staging Let's Encrypt saat uji coba pertama:
+	# https://acme-staging-v02.api.letsencrypt.org/directory
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# kamera hanya untuk input foto nota (situs sendiri); fitur lain dimatikan
+		Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+		-X-Powered-By
+	}
+
+	# API: round-robin ke semua replika service "api" (DNS Docker), batas body = upload + JSON webhook
+	handle /api/* {
+		request_body {
+			max_size {$API_MAX_BODY:25MB}
+		}
+		reverse_proxy {
+			dynamic a api 3000 {
+				refresh 5s
+			}
+			lb_policy round_robin
+			lb_try_duration 5s
+			fail_duration 10s
+			header_up X-Request-Id {http.request.uuid}
+		}
+	}
+
+	handle {
+		reverse_proxy web:8080
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

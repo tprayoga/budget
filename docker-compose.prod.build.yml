@@ -1,0 +1,18 @@
+# Override untuk MEMBANGUN image production secara lokal (uji acceptance / tanpa GHCR):
+#   GIT_SHA=$(git rev-parse --short HEAD) docker compose -f docker-compose.prod.yml -f docker-compose.prod.build.yml --env-file <env> build
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.prod
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.prod
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+  backup:
+    build:
+      context: docker/backup

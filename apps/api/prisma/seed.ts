@@ -12,6 +12,7 @@ import { applyPatch23 } from '../src/import/patch-2-3';
 import { applyPatch24 } from '../src/import/patch-2-4';
 import { applyCcsiDecisions } from '../src/import/patch-2-5-ccsi';
 import { applyPatch26 } from '../src/import/patch-2-6-ref-value';
+import { closeRedis } from '../src/redis/redis';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -285,4 +286,5 @@ main()
     console.error(e);
     process.exit(1);
   })
-  .finally(() => prisma.$disconnect());
+  // tutup Redis (lock pemindaian) agar proses seed selesai di container sekali-jalan
+  .finally(() => Promise.all([prisma.$disconnect(), closeRedis()]));

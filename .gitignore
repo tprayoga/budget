@@ -19,3 +19,4 @@ backups/
 migrasi/
 akun-baru-*.csv
 .deploy/
+!.env.production.example
