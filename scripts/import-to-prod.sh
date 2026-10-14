@@ -5,9 +5,12 @@
 #      akun demo tidak ada.
 # Pemakaian: ./scripts/import-to-prod.sh <folder-migrasi> [--env-file .env.production] [--project indotek] [--force]
 set -euo pipefail
+CALLER_PWD=$PWD
 cd "$(dirname "$0")/.."
+abs() { case "$1" in /*) echo "$1" ;; *) if [ -e "$CALLER_PWD/$1" ]; then echo "$CALLER_PWD/$1"; else echo "$PWD/$1"; fi ;; esac; }
 DIR="" ENV_FILE=.env.production PROJECT=indotek FORCE=0
 while [ $# -gt 0 ]; do case "$1" in --env-file) ENV_FILE=$2; shift ;; --project) PROJECT=$2; shift ;; --force) FORCE=1 ;; *) DIR=$1 ;; esac; shift; done
+[ -n "$DIR" ] && DIR=$(abs "$DIR"); ENV_FILE=$(abs "$ENV_FILE")
 [ -n "$DIR" ] && [ -f "$DIR/indotek-final.dump" ] && [ -f "$DIR/uploads-final.tar.gz" ] && [ -f "$DIR/manifest-final.txt" ] || { echo "Folder migrasi tidak lengkap"; exit 1; }
 DIR=$(cd "$DIR" && pwd)
 dc() { ENV_FILE="$ENV_FILE" docker compose -p "$PROJECT" -f docker-compose.prod.yml --env-file "$ENV_FILE" "$@"; }

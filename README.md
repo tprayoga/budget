@@ -174,3 +174,9 @@ docs/            ACCEPTANCE.md (angka acuan), CHANGELOG.md, samples/, screenshot
 | ![HP approval](docs/screenshots/mobile-approval.png) | ![HP rekap](docs/screenshots/mobile-rekap.png) |
 
 Screenshot dibuat otomatis oleh `pnpm e2e`.
+
+## Production
+
+Deployment production (Docker Compose + Caddy + Postgres + Redis + backup restic): lihat **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
+Ringkas: `scripts/server-setup.sh` (sekali) → `scripts/gen-secrets.sh` → migrasi data (`export-local-db.sh` →
+`prepare-migration.sh` → `import-to-prod.sh`) → rilis berikutnya `scripts/deploy.sh <git-sha>`.

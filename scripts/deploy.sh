@@ -7,7 +7,9 @@
 #   ./scripts/deploy.sh --rollback             # kembali ke tag sebelumnya
 # Opsi: --no-pull (image sudah ada lokal), --no-backup, --env-file <file> (default .env.production)
 set -euo pipefail
+CALLER_PWD=$PWD
 cd "$(dirname "$0")/.."
+abs() { case "$1" in /*) echo "$1" ;; *) if [ -e "$CALLER_PWD/$1" ]; then echo "$CALLER_PWD/$1"; else echo "$PWD/$1"; fi ;; esac; }
 
 ENV_FILE=.env.production PULL=1 BACKUP=1 TAG="" ROLLBACK=0 PROJECT=indotek
 while [ $# -gt 0 ]; do
@@ -22,6 +24,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+ENV_FILE=$(abs "$ENV_FILE")
 [ -f "$ENV_FILE" ] || { echo "$ENV_FILE tidak ada (lihat RUNBOOK: gen-secrets.sh)"; exit 1; }
 STATE=.deploy/$PROJECT && mkdir -p "$STATE"
 CURRENT=$(cat "$STATE/current_tag" 2>/dev/null || true)

@@ -5,8 +5,10 @@
 #              indotek-final.dump, uploads-final.tar.gz (tanpa file pengajuan uji coba), manifest-final.txt
 # DB Docker lokal tidak pernah diubah. Pemakaian: ./scripts/prepare-migration.sh migrasi/<tanggal> [--apply]
 set -euo pipefail
+CALLER_PWD=$PWD
 cd "$(dirname "$0")/.."
-DIR=${1:?folder hasil export-local-db.sh}; APPLY=${2:-}
+abs() { case "$1" in /*) echo "$1" ;; *) if [ -e "$CALLER_PWD/$1" ]; then echo "$CALLER_PWD/$1"; else echo "$PWD/$1"; fi ;; esac; }
+DIR=$(abs "${1:?folder hasil export-local-db.sh}"); APPLY=${2:-}
 PGU=${POSTGRES_USER:-indotek} TMP=indotek_migrasi_tmp
 dcl() { docker compose -f docker-compose.yml "$@"; }
 psqlt() { dcl exec -T postgres psql -U "$PGU" -v ON_ERROR_STOP=1 "$@"; }

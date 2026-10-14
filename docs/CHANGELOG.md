@@ -1,5 +1,140 @@
 # Changelog
 
+## Fase 4 — Deployment production (15 Oktober 2026)
+
+**Fase 3** (dashboard, cash flow, portal investor, laporan) **DITUNDA, bukan dilewati**. Fase 3 dikerjakan setelah
+production berjalan dan ada data pembayaran klien asli.
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 142 lulus |
+| Test API (Jest + PostgreSQL) | 110 lulus (baru: CSRF bertanda tangan, rate limiter memori & Redis 2 koneksi, lock, rate limit webhook, validasi MIME dari isi file, konfigurasi production, CSV user) |
+| Test web | 9 lulus |
+| Playwright e2e (mode dev) | 16 lulus |
+| **Playwright e2e terhadap stack production lokal** (`https://localhost:8444`, image prod non-root, self-signed) | **16 lulus** |
+| `pnpm lint`, `pnpm typecheck`, build image prod (api, web, backup) | bersih |
+
+### Acceptance lokal
+
+| Uji | Hasil |
+|---|---|
+| Stack prod lokal (`docker-compose.prod.yml`, DOMAIN=localhost) | Semua service healthy; API berjalan sebagai `node` (uid 1000), web sebagai `nginx` (uid 101); header HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy (`camera=(self)`), X-Frame-Options terpasang |
+| Rate limit dengan 2 replika API (`scripts/acceptance/rate-limit-replicas.sh`) | **LULUS**: 7 login salah dilayani bergantian 2 replika → 5 × 401, lalu 429, 429; key `rl:login:<ip>\|<email>` di Redis berisi 5 percobaan |
+| Backup → hapus DB & uploads → restore (`scripts/acceptance/backup-restore.sh`, S3 lokal) | **LULUS**: hash Rekap sebelum = sesudah (`fb0535…a3fb`), file upload 2 = 2 |
+| `deploy.sh` | Backup pre-deploy → migrate → seed → up → health versi cocok → tag dicatat. **Rilis rusak (`rusak01`) → rollback otomatis ke `2826a9e`** dalam ±2 menit |
+| `create-users.sh` / `reset-password.sh` | 5 akun dari template CSV, file hasil chmod 600, email ganda dilewati, reset password mencabut sesi |
+| Migrasi data — **DRY-RUN** (`prepare-migration.sh`) | Rekap sebelum = sesudah cleanup (`fbc04a…1435`) — rincian di bawah. **File migrasi final BELUM dibuat (menunggu persetujuan)** |
+
+### Yang dibuat
+
+**Aplikasi**
+- **Redis** (`REDIS_URL`): rate limit sliding window (skrip Lua, atomik) untuk login per IP + email dan webhook per API key (60/menit, `WEBHOOK_RATE_LIMIT`), serta lock terdistribusi untuk pemindaian over budget. Tanpa `REDIS_URL` (dev/test) dipakai implementasi in-memory.
+- **Token CSRF bertanda tangan HMAC-SHA256** dengan `COOKIE_SECRET` (double-submit). Rotasi secret → semua user login ulang.
+- **`assertProductionConfig`**: API menolak start bila JWT/COOKIE secret < 32 karakter atau masih default dev, `REDIS_URL` kosong, atau `COOKIE_SECURE=false`.
+- **Log JSON** (nestjs-pino) dengan request id. Cookie, Authorization, X-API-Key, X-CSRF-Token, dan password disamarkan; health check tidak dicatat.
+- **`/api/health`**: DB + Redis + versi (git sha), 503 bila bermasalah. `X-Instance` hanya bila `EXPOSE_INSTANCE=true`.
+- **Upload**: batas `UPLOAD_MAX_MB` (default 10); jenis file dicek dari **isi** (magic bytes PDF/PNG/JPEG/WebP/zip-Office/OLE), bukan Content-Type kiriman.
+- **Seed production**:
+  - Admin awal dari `ADMIN_EMAIL`/`ADMIN_PASSWORD` (idempotent per email, wajib ganti password).
+  - Tidak generate termin dan tidak import file contoh.
+  - `ALLOW_DEMO_SEED=true` hanya untuk stack uji.
+- **Swagger** mati di production (`SWAGGER=true` untuk mengaktifkan sementara).
+
+**Image & stack**
+- `apps/api/Dockerfile.prod`: multi-stage (build → prod-deps + Prisma Client → runtime), user `node`, tini, Chromium + font, healthcheck, label & `APP_VERSION` = git sha. Script server dikompilasi ke `dist-scripts/`.
+- `apps/web/Dockerfile.prod`: nginx-unprivileged port 8080, aset immutable, `index.html` no-cache.
+- `docker-compose.prod.yml`:
+
+  | Service | Isi |
+  |---|---|
+  | caddy | Let's Encrypt otomatis, header keamanan, round-robin ke replika api |
+  | web | nginx-unprivileged |
+  | api | image production |
+  | postgres 16 | network internal, tanpa port publik |
+  | redis 7 | requirepass + AOF, internal |
+  | backup | — |
+
+  Semua service: healthcheck, `restart: unless-stopped`, log 10 MB × 5, batas memori. `docker-compose.prod.build.yml` untuk build lokal.
+- `docker/backup`:
+  - pg_dump + uploads → restic (terenkripsi) → S3-compatible, cron 02:00 WIB.
+  - Retensi 14 harian + 8 mingguan, check integritas mingguan.
+  - Healthcheck: backup terakhir < 26 jam.
+
+**Script** (semua bisa di-copy-paste, path relatif aman)
+
+| Script | Fungsi |
+|---|---|
+| `gen-secrets.sh` | `.env.production` dari `.env.production.example` dengan secret acak, chmod 600 |
+| `server-setup.sh` | Ubuntu 24.04: update, TZ, user deploy, Docker, ufw, fail2ban, unattended-upgrades, swap; `--lock-ssh` terpisah agar tidak terkunci |
+| `deploy.sh` | pull → backup pre-deploy → migrate → seed → up → health (versi) → rollback otomatis; `--rollback` |
+| `backup-now.sh`, `restore.sh` | backup manual, restore DB + uploads |
+| `export-local-db.sh` → `prepare-migration.sh` (dry-run / `--apply`) → `import-to-prod.sh` | migrasi data lokal |
+| `create-users.sh`, `reset-password.sh`, `user-status.sh` | akun asli, reset password, nonaktifkan/aktifkan |
+| `acceptance/rate-limit-replicas.sh`, `acceptance/backup-restore.sh` | uji acceptance |
+
+**CI** (`.github/workflows/ci.yml`):
+- Job: lint + typecheck + unit; API test dengan Postgres 16 + Redis 7; e2e Playwright.
+- Build & push 3 image ke GHCR (tag = 7 karakter sha + `main`) hanya di `main`.
+- Deploy tetap manual.
+
+**Dokumen**: `docs/RUNBOOK.md` (persiapan GitHub/GHCR/DNS/S3 termasuk contoh IDCloudHost, setup server, migrasi, akun, monitoring UptimeRobot, deploy, rollback, backup/restore + uji restore bulanan, user, rotasi secret, insiden), `docs/users.template.csv`, `.env.production.example`.
+
+### Migrasi data — hasil DRY-RUN (di DB sementara; DB Docker lokal tidak diubah)
+
+| Tabel | Aksi | Baris |
+|---|---|---|
+| User | dibuat: "Migrasi Sistem" (nonaktif, tidak bisa login) | 1 |
+| FundRequest | dihapus (semua: 3 DRAFT + 1 DIPERIKSA_FINANCE) | 4 |
+| FundRequestLine / Approval / Attachment | dihapus | 44 / 2 / 12 |
+| FpdSequence | dihapus (penomoran FPD production mulai 001) | 1 |
+| Expense MANUAL/MOBILE/WEBHOOK (+ alokasi) | dihapus | 0 |
+| Notification / ApiKey / RefreshToken | dihapus | 4 / 0 / 44 |
+| ProjectMember akun demo | dihapus | 1 |
+| Expense.createdById / verifiedById | dialihkan ke Migrasi Sistem | 152 / 152 |
+| ImportMappingRule.createdById | dialihkan | 30 |
+| ImportHeldItem.resolvedById | dialihkan | 5 |
+| FieldOverride.userId | dialihkan | 16 |
+| ClientInvoiceRef.appliedById | dialihkan | 0 (diterapkan oleh skrip sistem) |
+| AuditLog | **tidak diubah** (merujuk akun demo) | 4.203 |
+| Akun demo dirujuk AuditLog (admin 2.602, finance 1.524, pm 77 entri) | dianonimkan: nonaktif, "Akun demo (dihapus)", email & password acak | 3 |
+| Akun demo tidak dirujuk (direktur, investor) | dihapus | 2 |
+| Akun aktif setelah cleanup | (admin awal dibuat seed saat import) | 0 |
+| File upload dibuang | — | 0 (folder uploads lokal kosong) |
+
+**Rekap sebelum = sesudah cleanup: YA** (`fbc04a3b…1435`). Tidak ada expense uji coba, sehingga realisasi tidak berubah.
+
+### Yang perlu direview
+
+1. **Persetujuan migrasi:** dry-run di atas. Setelah disetujui saya jalankan `prepare-migration.sh … --apply` (membuat file final), lalu uji `import-to-prod.sh` ke stack prod lokal untuk acceptance migrasi (jumlah baris, Rekap, FundRequest = 0, akun aktif = 1, akun demo = 0) sebelum Anda menjalankannya di server.
+2. **Belum diuji di lingkungan nyata** (tidak ada akses): `server-setup.sh` di Ubuntu 24.04, sertifikat Let's Encrypt (lokal memakai CA internal Caddy), workflow CI (repo belum punya remote), endpoint IDCloudHost (`is3.cloudhost.id` — cek di panel). Disarankan uji pertama dengan `ACME_CA` staging.
+3. **Uji S3 lokal memakai versitygw**, bukan MinIO: image `minio/minio` tidak lagi bisa ditarik tanpa login, dan SeaweedFS macet saat menulis. Service di compose tetap bernama `minio` (profile `backup-test`, tidak jalan di production).
+4. **`OverrunState` ikut dimigrasi.** Pos/cluster yang saat ini sudah over tidak memicu notifikasi ulang di production; notifikasi baru hanya untuk lintasan ambang berikutnya. Bila PM/Direktur production sebaiknya menerima ringkasan kondisi saat ini, tabel ini bisa dikosongkan saat migrasi.
+5. **API production default 1 replika** (`dc up -d --scale api=2` bila perlu). Ukuran image API ±1,8 GB, sebagian besar Chromium untuk PDF.
+6. **Fase 3 ditunda** (lihat atas).
+
+### Checklist server (urutan; rincian di RUNBOOK)
+
+- [ ] **Laptop** — persetujuan dry-run migrasi → `./scripts/prepare-migration.sh migrasi/<tanggal> --apply` (§4.1)
+- [ ] **GitHub** — buat repo private `{{GHCR_OWNER}}/indotek-budget`, push `main`, tunggu CI hijau, catat tag image (§1.1)
+- [ ] **GitHub** — token classic `read:packages` untuk server (§1.2)
+- [ ] **DNS** — A record `{{DOMAIN}}` → IP VPS (§1.4)
+- [ ] **Object storage** — bucket private + access key khusus backup hak minimal (§1.5)
+- [ ] **Server (root)** — `scp scripts/server-setup.sh` → `sudo bash server-setup.sh` (§2)
+- [ ] **Server** — uji `ssh deploy@<ip>` di terminal lain → `sudo bash server-setup.sh --lock-ssh` (§2)
+- [ ] **Server (deploy)** — deploy key read-only → `git clone … /opt/indotek` (§3.1)
+- [ ] **Server** — `./scripts/gen-secrets.sh …` → isi S3 key & `TAG` → simpan password admin & `RESTIC_PASSWORD` di password manager (§3.2)
+- [ ] **Server** — `docker login ghcr.io` (token read-only) → `pull` (§3.3)
+- [ ] **Laptop → server** — `scp` file migrasi final ke `/opt/indotek/migrasi/` (§4.1)
+- [ ] **Server** — `./scripts/import-to-prod.sh migrasi` → harus **IMPORT LULUS** (§4.2)
+- [ ] **Server** — `./scripts/deploy.sh <tag> --no-backup` (catat tag aktif) → `shred -u migrasi/*` (§4.2)
+- [ ] **Browser** — login admin `https://{{DOMAIN}}`, ganti password, cek Rekap (§5)
+- [ ] **Server** — `./scripts/create-users.sh users.csv` → bagikan password per orang → `shred` (§5)
+- [ ] **Server** — `./scripts/backup-now.sh awal` → `dc exec backup restic snapshots` (§9)
+- [ ] **UptimeRobot** — monitor keyword `https://{{DOMAIN}}/api/health` + SSL expiry (§6.1)
+- [ ] **Kalender** — uji restore bulanan (§9.1), rotasi token GHCR tahunan (§11)
+
 ## Penutupan Fase 2 — ringkasan (15 Oktober 2026)
 
 Fase 2 (realisasi biaya, termin klien, import RAB, buku kas) beserta 2.1–2.4 dan perbaikan pengajuan dana sudah selesai. Rincian ada di bagian-bagian di bawah dan di ACCEPTANCE G–W.
