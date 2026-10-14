@@ -373,3 +373,21 @@ Dites di `packages/shared/src/calc/fundRequest-cluster.test.ts`, `apps/api/test/
 Catatan pada tabel:
 - Sinagar: realisasi naik 490.250 (PAJAK otomatis permit termin 1, keputusan 2.4 b), sehingga 28.477.423 − 490.250 = 27.987.173.
 - Selisih 1–2 rupiah terhadap angka ≈ di instruksi berasal dari Σ ROUND per pos.
+
+## V. CCSI: PPN 0, template implementasi, retensi, aturan pencocokan C (15 Okt 2026)
+
+Dites di `packages/shared/src/calc/{ppn,termin-retensi}.test.ts` dan `apps/api/test/phase23.e2e-spec.ts`.
+
+- **Kalawiran implementasi** PO 54.419.896, PPN 0, PPh 2,5%:
+
+  | Termin | % | DPP | Net diharapkan |
+  |---|---|---|---|
+  | 1 | 30% | 16.325.968,80 | 15.917.819,58 |
+  | 2 | 30% | 16.325.968,80 | 15.917.819,58 |
+  | 3 | 30% | 16.325.968,80 | 15.917.819,58 |
+  | 4 | 10% | 5.441.989,60 | 5.305.939,86 |
+
+  Retensi termin 4: opname 30 Nov 2026 → cair 28 Feb 2027 (opname 31 Mei → 31 Agustus).
+- **Aturan C:** referensi Unpaid dibandingkan dengan tagihan (DPP + PPN), referensi Paid dengan net (DPP + PPN − PPh), ± Rp 10.
+  - Contoh: Kersanagara RW 04 permit termin 1 DPP 2.500.000; referensi Unpaid 2.775.000 → cocok (INVOICED); referensi 2.500.000 → "cocok di DPP" (perlu konfirmasi pajak, tidak diterapkan).
+  - INV-RAA/004 16.325.969 (tanpa nomor termin) → Kalawiran IMPLEMENTASI termin 1 (kandidat 1–3 dari PO yang sama → termin terkecil).

@@ -1,5 +1,92 @@
 # Changelog
 
+## Penutupan Fase 2 — ringkasan (15 Oktober 2026)
+
+Fase 2 (realisasi biaya, termin klien, import RAB, buku kas) beserta 2.1–2.4 dan perbaikan pengajuan dana sudah selesai. Rincian ada di bagian-bagian di bawah dan di ACCEPTANCE G–U.
+
+### Status verifikasi akhir
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 140 lulus |
+| Test API (Jest + PostgreSQL) | 100 lulus |
+| Test web | 9 lulus |
+| Playwright e2e | 16 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| DB Docker | migrasi terakhir `20261015120000_termin_retensi`; item ditahan = 0; notifikasi over budget 4 (2 langsung + 2 ringkasan harian) |
+
+### Yang dibangun di Fase 2
+
+- **Realisasi biaya.** Input manual/HP/webhook dengan verifikasi FINANCE; alokasi ke cluster (EQUAL / PRO_RATA_PO / MANUAL, penerima per tanggal implementasi); budget vs realisasi per pos.
+- **Import.**
+  - RAB: aturan pemetaan, daftar ditahan/duplikat/dilewati yang bisa dibatalkan, referensi tagihan.
+  - Buku kas + rekonsiliasi.
+  - Penyesuaian PO (addwork/deduction).
+  - Import budget dengan proteksi field yang diedit di aplikasi.
+- **PO per cluster** (implementasi/permit/SND/addwork/deduction, sub-jenis cluster/subfeeder). Nilai PO budget diturunkan dari PO; margin permit hanya dari PO PERMIT.
+- **Termin klien.**
+  - Termin per PO dari template client: ADW 80/10/10, Evantama 20/30/40/10 + permit 50/50, CCSI 30/30/30/10 dengan retensi 3 bulan dari opname.
+  - Addwork/deduction mengoreksi termin 1.
+  - PPN titipan (DPP + PPN; PPN per client, mis. CCSI 0%) dan PAJAK otomatis = DPP + PPN − diterima.
+  - Pencocokan referensi RAB aturan C; mode "cocok di DPP" perlu konfirmasi.
+  - Tanggal tidak pernah ditebak (badge + inbox FINANCE + halaman "Pembayaran klien").
+- **Pengajuan dana** memperhitungkan realisasi di luar pengajuan dan batas cluster (over di satu pos mengurangi ruang cluster). Termin sebelum sistem bisa diset per cluster.
+- **Notifikasi over budget.** Total cluster dikirim langsung sekali per lintasan; pos masuk ringkasan harian.
+- **Setting.** Retensi = piutang (default resmi); PPN default 11%; ambang kuning & over.
+
+### Rekap akhir (DB Docker; retensi = piutang, interest 10%)
+
+| Project | Nilai proyek | Profit proyeksi | DPP termin dibayar | Realisasi biaya | Profit realisasi | Margin permit | PPN titipan |
+|---|---|---|---|---|---|---|---|
+| ADW | 712.513.400 | 67.702.754 | 0 | 375.453.286 | −375.453.286 | 0 | 0 |
+| CCSI | 198.835.655 | 10.332.449 | 0 | 128.413.698 | −128.413.698 | −6.870.920 | 0 |
+| EVANTAMA | 236.454.823 | 7.640.924 | 18.500.000 | 141.665.869 | −123.165.869 | −6.451.500 | 2.035.000 |
+
+Profit realisasi masih negatif karena pembayaran klien asli belum diinput. Halaman "Pembayaran klien" berisi **53 termin** yang perlu dikejar.
+
+### Keputusan terbuka
+
+1. **Redis** — ditunda ke fase deployment (rate limit login & pemindaian over budget masih in-process; cukup untuk 1 instance API).
+
+**Catatan (bukan keputusan desain, tetapi belum selesai di data):**
+
+- Pemecahan PO implementasi EVANTAMA (keputusan 2.4 c) **masih menunggu persetujuan commit**. Dry-run sudah ada (`scripts/split-evantama-po.ts`).
+- Dengan aturan C, **3 referensi EVANTAMA Unpaid yang sudah diterapkan tidak cocok lagi**: Kersanagara RW 08 permit termin 1 & 2, Sinagar permit termin 2. Nilai di RAB = net (DPP + PPN − PPh), bukan tagihan. Data yang sudah diterapkan tidak diubah.
+- Untuk 3 referensi implementasi EVANTAMA yang Unpaid, aturan C juga tidak akan cocok setelah PO dipecah karena nilainya = net. Yang Paid (I2628-00142) tetap cocok.
+- Kesimpulan: sheet EVANTAMA tampaknya mencatat nilai net juga untuk invoice Unpaid. Perlu dipastikan apakah aturan C untuk EVANTAMA memakai net.
+
+## Keputusan CCSI & aturan pencocokan C (15 Oktober 2026)
+
+- **A. PPN CCSI = 0.**
+  - Client CCSI ppnRate = 0. Termin CCSI yang belum dibayar ikut diset PPN 0 (4 termin: permit Kalawiran, Karondoran, Padangsari, SND Kalawiran); tanpa ini nilai tagihannya tetap +11% dan tidak akan cocok.
+  - Semua perubahan diaudit dengan alasan "konfirmasi user 14 Okt 2026: invoice CCSI tanpa PPN". PPh tetap pajakRate cluster 2,5%.
+- **B. Template termin implementasi CCSI** 30% MOS / 30% Implementation Done / 30% ATP & Punchlist Clear / 10% Retention.
+  - Jatuh tempo manual.
+  - Termin 4 punya `retentionMonths = 3`; FINANCE mengisi **tanggal opname**, lalu `retentionReleaseDate` = opname + 3 bulan (akhir bulan dijepit) tampil di tab Termin Klien.
+  - Digenerate per PO implementasi untuk Kalawiran, Karondoran, Padangsari (dry-run lalu commit). Termin permit & SND tetap manual.
+  - Juga berlaku untuk instalasi baru (patch `2.5-ccsi-ppn0-template-implementasi`).
+- **C. Aturan pencocokan (semua client):**
+  - Referensi Unpaid → tagihan (DPP + PPN) → INVOICED.
+  - Referensi Paid → net (DPP + PPN − PPh) → PAID.
+  - Mode "cocok di DPP" tetap ada (perlu konfirmasi pajak).
+  - Tambahan: referensi tanpa nomor termin yang cocok dengan beberapa termin bernilai sama dari PO yang sama → termin terkecil. Ini dibutuhkan untuk INV-RAA/004 karena termin 1–3 sama-sama 30%.
+  - Validasi penerapan memakai toleransi ± Rp 10 (termin 16.325.968,80 vs invoice 16.325.969).
+- **Hasil CCSI (diterapkan sebagai INVOICED/Unpaid):**
+
+  | Referensi | Nilai | Termin |
+  |---|---|---|
+  | INV-RAA/001/IX/2026 | 10.212.800 | Kalawiran PERMIT termin 1 |
+  | INV-RAA/002/IX/2026 | 12.176.000 | Karondoran PERMIT termin 1 |
+  | INV-RAA/003/IX/2026 | 4.373.496 | Kalawiran SND termin 1 |
+  | INV-RAA/004/IX/2026 | 16.325.969 | **Kalawiran IMPLEMENTASI termin 1 (30% MOS)** |
+
+  Keempatnya tanpa tanggal invoice → badge + halaman Pembayaran klien.
+- **D. EVANTAMA dengan aturan C:**
+  - Sinagar permit termin 1 (Paid) tetap cocok.
+  - **3 referensi Unpaid yang sudah diterapkan tidak cocok lagi** karena nilainya = net, bukan tagihan: I2628-00150, I2628-00159 (Kersanagara RW 08 permit 4.875.750 vs tagihan 4.995.000) dan I2628-00158 (Sinagar permit 20.044.750 vs tagihan 20.535.000). Tidak diubah.
+  - 4 referensi implementasi tetap tidak cocok sampai PO dipecah (keputusan c). Setelah dipecah, yang Paid (I2628-00142) cocok; 3 yang Unpaid hanya cocok bila aturan net dipakai.
+- Catatan: instruksi "termin manual 30% Kalawiran" yang digantikan B tidak pernah saya terima, sehingga tidak ada yang perlu dibatalkan.
+
 ## Koreksi batas cluster + keputusan Fase 2.4 (a)(b) diterapkan, (c) dry-run, (d)(f) disiapkan (15 Oktober 2026)
 
 ### Status verifikasi
