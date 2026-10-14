@@ -2,7 +2,7 @@
  * Pemakaian: npx ts-node --transpile-only scripts/report-sisa-pengajuan.ts [KODE_PROJECT ...]
  */
 import { PrismaClient } from '@prisma/client';
-import { aggregateFrHistory, calcCluster, computeFundRequest, formatAngka, frBudgetAmounts, frDefaultPctCair, FR_CODES, moneyStr } from '@indotek/shared';
+import { aggregateFrHistory, calcCluster, computeFundRequest, D, formatAngka, frBudgetAmounts, frDefaultPcts, FR_CODES, moneyStr } from '@indotek/shared';
 import { AuditService } from '../src/audit/audit.service';
 import { SettingsService } from '../src/settings/settings.service';
 import { clusterCalcInput } from '../src/budget/budget.mapper';
@@ -15,7 +15,7 @@ async function main() {
   const ps = prisma as unknown as PrismaService;
   const settings = new SettingsService(ps, new AuditService(ps));
   const f = (v: { toString(): string }) => formatAngka(moneyStr(v.toString()));
-  console.log('| Project | Cluster | Budget total | Sudah dicairkan | Realisasi tanpa pengajuan | Sisa yang bisa diajukan | Pos habis/over | Termin ke |');
+  console.log('| Project | Cluster | Budget cluster | Sudah dicairkan + proses | Realisasi tanpa pengajuan | Over di pos lain | Σ sisa pos | Sisa cluster | Default diajukan | Termin ke |');
   for (const code of codes) {
     const clusters = await prisma.cluster.findMany({ where: { project: { code } }, include: { budgetLines: true, fundRequests: { include: { lines: true } } }, orderBy: { sortOrder: 'asc' } });
     for (const c of clusters) {
@@ -28,15 +28,13 @@ async function main() {
         c.terminOffset,
       );
       const real = await realisasiTanpaPengajuan(prisma, c.id);
-      const fr = computeFundRequest(
-        calc.nilaiProyek,
-        FR_CODES.map((k) => {
-          const base = { code: k, budgetAmount: moneyStr(amounts[k]), sudahDicairkanSebelum: hist.sudahDicairkanSebelum[k], sedangDiproses: hist.sedangDiproses[k], realisasiTanpaPengajuan: real[k], pctCairSebelumnya: hist.pctCairSebelumnya[k] };
-          return { ...base, pctCair: frDefaultPctCair(base) };
-        }),
+      const bases = FR_CODES.map((k) => ({ code: k, budgetAmount: moneyStr(amounts[k]), sudahDicairkanSebelum: hist.sudahDicairkanSebelum[k], sedangDiproses: hist.sedangDiproses[k], realisasiTanpaPengajuan: real[k], pctCairSebelumnya: hist.pctCairSebelumnya[k] }));
+      const pcts = frDefaultPcts(bases);
+      const fr = computeFundRequest(calc.nilaiProyek, bases.map((b) => ({ ...b, pctCair: pcts[b.code] })));
+      const cl = fr.cluster;
+      console.log(
+        `| ${code} | ${c.name} | ${f(cl.budget)} | ${f(fr.total.sudahDicairkanSebelum.plus(fr.total.sedangDiproses))} | ${f(fr.total.realisasiTanpaPengajuan)} | ${f(cl.overPos)} | ${f(fr.total.sisaTersedia)} | ${f(D.max(cl.sisaCluster, 0).toDecimalPlaces(0, D.ROUND_DOWN))} | ${f(fr.total.diajukan)} | ${hist.terminKe} |`,
       );
-      const habis = fr.lines.filter((l) => l.habis && !l.budgetAmount.isZero()).map((l) => `${l.code}${l.sisaTersedia.lte(-1) ? ` over ${f(l.sisaTersedia.neg())}` : ''}`);
-      console.log(`| ${code} | ${c.name} | ${f(fr.total.budgetAmount.toDecimalPlaces(0))} | ${f(fr.total.sudahDicairkanSebelum)} | ${f(fr.total.realisasiTanpaPengajuan)} | ${f(fr.total.sisaTersedia)} | ${habis.join(', ') || '-'} | ${hist.terminKe} |`);
     }
   }
   const drafts = await prisma.fundRequest.findMany({ where: { status: 'DRAFT' }, include: { cluster: true } });

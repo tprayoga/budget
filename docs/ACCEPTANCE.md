@@ -350,3 +350,26 @@ Rekap DB Docker (default % = sisa):
 | Cluster Kersanagara RW 04 Tasik | 39.666.511 | 16.072.182 | 23.594.329 |
 
 Sisa yang bisa diajukan bisa lebih besar dari budget − realisasi. Ini terjadi karena pos yang over tidak mengurangi sisa pos lain; dana tidak dipindah antar pos.
+
+## U. Batas cluster pada pengajuan (koreksi 15 Okt 2026)
+
+Dites di `packages/shared/src/calc/fundRequest-cluster.test.ts`, `apps/api/test/realization.e2e-spec.ts` (Kalawiran),
+`e2e/phase2.spec.ts` (Karondoran).
+
+- `sisaCluster = Σ ROUND(budget pos) − Σ (sudahDicairkan + sedangDiproses + realisasiTanpaPengajuan)` semua pos, termasuk kelebihan pos yang over. Validasi submit/approve: Σ diajukan ≤ floor(sisaCluster), di samping batas per pos. Override ADMIN + alasan tetap berlaku.
+- Σ ROUND per pos dipakai (bukan ROUND(Σ)) supaya acuan A tetap 7.708.170. ROUND(Σ budget) = 7.708.168 akan memotong pengajuan 100% sebanyak 2 rupiah.
+- Default wizard: bila Σ sisa pos positif > sisaCluster, tiap pos diskalakan proporsional. Target pos = floor(sisa pos × sisaCluster / Σ sisa pos), sisa receh ke pos terbesar. Kelebihan akibat pembulatan per pos dipotong dari pos terbesar.
+- Contoh unit: SUBCON sisa 6.000.000, OPS 1.000.000, Marketing over 400.000 → sisaCluster 6.600.000 → default 5.657.143 + 942.857.
+
+| Cluster (DB Docker) | Budget cluster | Terpakai | Over di pos lain | Σ sisa pos | Sisa cluster = default diajukan |
+|---|---|---|---|---|---|
+| Kalawiran (Manado) | 57.712.946 | 44.208.306 | 3.811.723 | 17.316.362 | **13.504.639** |
+| Karondoran (Manado) | 45.404.206 | 37.947.460 | 4.642.534 | 12.099.279 | **7.456.746** |
+| Padangsari (Semarang) | 68.249.398 | 46.257.932 | 200.000 | 22.191.466 | **21.991.466** |
+| Sinagar Tasik | 128.468.017 | 100.480.843 | 11.596.186 | 39.583.360 | **27.987.173** |
+| Kersanagara RW 08 | 39.878.108 | 25.112.843 | 0 | 14.765.265 | **14.765.264** |
+| Kersanagara RW 04 | 39.666.511 | 16.072.182 | 0 | 23.594.329 | **23.594.328** |
+
+Catatan pada tabel:
+- Sinagar: realisasi naik 490.250 (PAJAK otomatis permit termin 1, keputusan 2.4 b), sehingga 28.477.423 − 490.250 = 27.987.173.
+- Selisih 1–2 rupiah terhadap angka ≈ di instruksi berasal dari Σ ROUND per pos.

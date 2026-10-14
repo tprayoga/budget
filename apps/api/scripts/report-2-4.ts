@@ -30,12 +30,13 @@ async function main() {
   for (const p of projects) {
     const { refs, matches } = await referenceMatches(prisma, p.id);
     const open = refs.filter((r) => !r.appliedPaymentId);
-    const ok = open.filter((r) => matches.get(r.id)?.suggestion);
+    const ok = open.filter((r) => matches.get(r.id)?.suggestion?.mode === 'NET');
+    const dpp = open.filter((r) => matches.get(r.id)?.suggestion?.mode === 'DPP');
     const amb = open.filter((r) => matches.get(r.id)?.ambiguous);
-    console.log(`| ${p.code} | ${refs.length} | ${refs.length - open.length} | ${ok.length} | ${amb.length} | ${open.length - ok.length - amb.length} |`);
+    console.log(`| ${p.code} | ${refs.length} | ${refs.length - open.length} | ${ok.length} (+${dpp.length} cocok di DPP, perlu konfirmasi pajak) | ${amb.length} | ${open.length - ok.length - dpp.length - amb.length} |`);
     for (const r of refs) {
       const m = matches.get(r.id)?.suggestion;
-      console.log(`     ${(r.termin ? `Term ${r.termin} ` : '').padEnd(7)}${r.invoiceNo.padEnd(22)} net ${f(r.netAmount ?? 0).padStart(12)} ${r.paid ? 'Paid  ' : 'Unpaid'} ${r.blockTitle ?? '-'} → ${m ? `COCOK ${m.clusterName} ${m.kind} termin ${m.termin} (net diharapkan ${f(m.expectedNet)})` : matches.get(r.id)?.ambiguous ? 'GANDA' : 'tidak cocok'}`);
+      console.log(`     ${(r.termin ? `Term ${r.termin} ` : '').padEnd(7)}${r.invoiceNo.padEnd(22)} net ${f(r.netAmount ?? 0).padStart(12)} ${r.paid ? 'Paid  ' : 'Unpaid'} ${r.blockTitle ?? '-'} → ${r.appliedPaymentId ? 'SUDAH DITERAPKAN' : m ? `${m.mode === 'DPP' ? 'COCOK DI DPP (perlu konfirmasi pajak)' : 'COCOK'} ${m.clusterName} ${m.kind} termin ${m.termin} (net diharapkan ${f(m.expectedNet)})` : matches.get(r.id)?.ambiguous ? 'GANDA' : 'tidak cocok'}`);
     }
 
     // proyeksi & realisasi (kondisi sekarang) + simulasi setelah semua yang cocok diterapkan

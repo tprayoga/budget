@@ -1,5 +1,70 @@
 # Changelog
 
+## Koreksi batas cluster + keputusan Fase 2.4 (a)(b) diterapkan, (c) dry-run, (d)(f) disiapkan (15 Oktober 2026)
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 136 lulus (baru: acuan U) |
+| Test API | 99 lulus (baru: batas cluster Kalawiran, PPN per client, cocok di DPP, pembayaran klien belum lengkap) |
+| Test web | 9 lulus |
+| Playwright e2e | 16 lulus |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| DB Docker | migrasi `20261015090000_client_ppn_po_subkind`; (a) & (b) diterapkan; (c) hanya dry-run |
+
+### Koreksi: over di satu pos mengurangi ruang pengajuan cluster
+
+- **Batas cluster:** `sisaCluster = Σ ROUND(budget pos) − Σ terpakai` (dicairkan + diproses + realisasi tanpa pengajuan) semua pos.
+  - Validasi submit/approve: Σ diajukan ≤ sisaCluster, selain batas per pos. Override ADMIN tetap berlaku.
+  - Pesan error menyebut "Batas cluster: total diajukan Rp x melebihi sisa cluster Rp y".
+- **Default wizard** diskalakan proporsional ke sisa cluster (floor per pos, receh ke pos terbesar). Tombol "Sisa budget" memakai nilai yang sama.
+- **Ringkasan wizard:** Budget cluster / Sudah terpakai / Over di pos lain / Sisa cluster yang bisa diajukan / Diajukan. Kartu Diajukan merah bila melebihi.
+- **PDF:** baris "Batas cluster" di Informasi Pendukung. Form web juga menampilkan catatan batas cluster.
+
+### Keputusan Fase 2.4
+
+- **(a) Diterapkan** — generate ulang termin 6 cluster ADW, persis sesuai diff ACCEPTANCE R. Termin 1 dikoreksi dan 8 termin terpisah dihapus; pelaku audit = sistem.
+- **(b) Diterapkan** — 4 referensi EVANTAMA permit:
+  - Sinagar termin 1: Paid → **Dibayar**, tanggal diterima kosong (badge + inbox FINANCE), PAJAK otomatis 490.250, PPN titipan 2.035.000.
+  - Sinagar termin 2, Kersanagara RW 08 termin 1 & 2: Ditagih.
+- **(c) Dry-run saja, MENUNGGU PERSETUJUAN** — `scripts/split-evantama-po.ts` (commit dengan `--commit`).
+  - PO implementasi per cluster dipecah jadi CLUSTER (PO yang ada diubah) + SUBFEEDER (PO baru), catatan "nilai dari sheet BOQ Plan — cocokkan dengan dokumen PO".
+  - Total tetap 108.940.677 / 34.882.758 / 41.631.388.
+  - Semua termin implementasi masih UNBILLED; template 20/30/40/10 per PO.
+  - **Simulasi pencocokan: 4 dari 4 referensi implementasi cocok** (net 18.425.090, 5.182.355, 5.819.864, 1.739.229 = net diharapkan).
+- **(d) Disiapkan, PPN CCSI tidak diubah.**
+  - `Client.ppnRate` (ADMIN, `PATCH /clients/:id/ppn`, diaudit dengan alasan; diatur di Data Master). Urutan prioritas PPN termin baru: setting project → client → global.
+  - Pencocokan referensi mode kedua **"cocok di DPP"** (net referensi = DPP termin): usulan berlabel "perlu konfirmasi pajak", tanpa tombol Konfirmasi, tidak ikut "Terapkan semua yang cocok".
+  - CCSI: 3 dari 4 referensi cocok di DPP (INV-RAA/001 → permit Kalawiran, 002 → permit Karondoran, 003 → SND Kalawiran). INV-RAA/004 (16.325.969) tidak cocok.
+- **(e) Sudah dikerjakan** pada perbaikan sebelumnya (realisasi di luar pengajuan); tabel kini dilengkapi kolom sisa cluster (ACCEPTANCE U).
+- **(f) Halaman FINANCE "Pembayaran klien"** (`/pembayaran-klien`, `GET /client-payments/incomplete`, ADMIN/FINANCE/DIREKTUR).
+  - Isinya: termin UNBILLED yang cluster-nya DONE atau implementasinya lewat 30 hari, serta termin Ditagih/Dibayar tanpa tanggal invoice/diterima. Dikelompokkan per project dengan alasan per termin.
+  - DB Docker: **52 termin**.
+
+### Laporan 6 cluster (DB Docker)
+
+| Cluster | Budget cluster | Realisasi tanpa pengajuan | Over di pos lain | Σ sisa pos (sebelumnya) | **Sisa cluster** |
+|---|---|---|---|---|---|
+| Kalawiran (Manado) | 57.712.946 | 44.208.306 | 3.811.723 | 17.316.362 | **13.504.639** |
+| Karondoran (Manado) | 45.404.206 | 37.947.460 | 4.642.534 | 12.099.279 | **7.456.746** |
+| Padangsari (Semarang) | 68.249.398 | 46.257.932 | 200.000 | 22.191.466 | **21.991.466** |
+| Sinagar Tasik | 128.468.017 | 100.480.843 | 11.596.186 | 39.583.360 | **27.987.173** |
+| Kersanagara RW 08 | 39.878.108 | 25.112.843 | 0 | 14.765.265 | **14.765.264** |
+| Kersanagara RW 04 | 39.666.511 | 16.072.182 | 0 | 23.594.329 | **23.594.328** |
+
+**Rekap setelah (b)** (retensi = piutang): EVANTAMA DPP termin dibayar 18.500.000, realisasi biaya 141.665.869, profit realisasi **−123.165.869**, PPN titipan **2.035.000**. ADW dan CCSI tidak berubah.
+
+### Yang perlu direview
+
+1. **(c) menunggu persetujuan** untuk commit pemecahan PO EVANTAMA. Setelah commit, pencocokan dijalankan ulang otomatis dan hasilnya dilaporkan.
+2. **Budget cluster = Σ ROUND per pos, bukan ROUND(Σ).** Bila memakai ROUND(Σ), acuan A (7.708.170) terpotong 2 rupiah. Akibatnya angka sisa cluster berbeda 1–2 rupiah dari angka ≈ di instruksi (Kalawiran 13.504.639 vs ≈13.504.641).
+3. **Sinagar 27.987.173, bukan ≈28.477.423.** Penyebabnya PAJAK otomatis 490.250 dari permit termin 1 yang diterapkan di (b): biaya itu sudah dibayar sehingga ikut mengurangi sisa.
+4. **Ada 2 draft di Docker dibuat sebelum aturan batas cluster:** DRAFT-8A5NQB (Sub Feeder Batumpang, 4.661.033) dan DRAFT-V5LND6 (Padangsari, 22.191.422 > sisa cluster 21.991.466). Draft tidak dipotong otomatis karena angkanya isian user. Saat dibuka tampil peringatan batas cluster, dan submit ditolak sampai dikurangi.
+5. **INV-RAA/004/IX/2026 (16.325.969) belum cocok dengan termin mana pun.** CCSI belum punya termin implementasi (tanpa template).
+6. **Halaman pembayaran klien berisi 52 termin.** Sebagian besar termin template ADW yang cluster-nya sudah lewat 30 hari sejak implementasi tetapi belum ditagih di sistem.
+7. **Redis tetap ditunda ke fase deployment.**
+
 ## Perbaikan — Wizard Pengajuan Dana memperhitungkan realisasi yang sudah ada (14 Oktober 2026)
 
 ### Masalah
