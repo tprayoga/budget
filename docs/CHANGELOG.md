@@ -10,7 +10,7 @@ production berjalan dan ada data pembayaran klien asli.
 | Pemeriksaan | Hasil |
 |---|---|
 | Unit test shared | 142 lulus |
-| Test API (Jest + PostgreSQL) | 110 lulus (baru: CSRF bertanda tangan, rate limiter memori & Redis 2 koneksi, lock, rate limit webhook, validasi MIME dari isi file, konfigurasi production, CSV user) |
+| Test API (Jest + PostgreSQL) | 111 lulus (baru: pemindaian over budget tanpa penerima, CSRF bertanda tangan, rate limiter memori & Redis 2 koneksi, lock, rate limit webhook, validasi MIME dari isi file, konfigurasi production, CSV user) |
 | Test web | 9 lulus |
 | Playwright e2e (mode dev) | 16 lulus |
 | **Playwright e2e terhadap stack production lokal** (`https://localhost:8444`, image prod non-root, self-signed) | **16 lulus** |
@@ -25,7 +25,10 @@ production berjalan dan ada data pembayaran klien asli.
 | Backup → hapus DB & uploads → restore (`scripts/acceptance/backup-restore.sh`, S3 lokal) | **LULUS**: hash Rekap sebelum = sesudah (`fb0535…a3fb`), file upload 2 = 2 |
 | `deploy.sh` | Backup pre-deploy → migrate → seed → up → health versi cocok → tag dicatat. **Rilis rusak (`rusak01`) → rollback otomatis ke `2826a9e`** dalam ±2 menit |
 | `create-users.sh` / `reset-password.sh` | 5 akun dari template CSV, file hasil chmod 600, email ganda dilewati, reset password mencabut sesi |
-| Migrasi data — **DRY-RUN** (`prepare-migration.sh`) | Rekap sebelum = sesudah cleanup (`fbc04a…1435`) — rincian di bawah. **File migrasi final BELUM dibuat (menunggu persetujuan)** |
+| Migrasi data — DRY-RUN → **`--apply`** (`prepare-migration.sh`) | Disetujui. Rekap sebelum = sesudah cleanup (`fbc04a…1435`). File final dibuat — rincian di bawah |
+| **Import ke stack prod lokal** (`import-to-prod.sh`, tanpa `ALLOW_DEMO_SEED`) | **IMPORT LULUS**: checksum cocok, jumlah baris = manifest (User +1 admin awal), Rekap sama persis dengan lokal (`fbc04a…1435`), FundRequest = 0, akun aktif = 1 (admin dari env), akun demo = 0 |
+| Pemindaian over budget pertama (dipicu `create-users.sh`) | Sebelum: Notification = 0, OverrunState = 0. Setelah 5 akun dari template dibuat: 31 pos/cluster over → **1 total cluster** (notifikasi langsung) + 30 pos (ringkasan harian) = 4 notifikasi. PM & Direktur masing-masing menerima *"Over budget: Subfeeder - TEPAS RW 05 NGAWI \| Total realisasi 105,9% dari budget (Rp 9.100.948 / Rp 8.594.920) — ADW"* dan *"Ringkasan harian over budget 15 Oktober 2026 — 30 pos"* |
+| `deploy.sh` dengan `ACME_CA` staging | Mencetak catatan STAGING, health check lulus (`curl -k`) |
 
 ### Yang dibuat
 
@@ -81,7 +84,7 @@ production berjalan dan ada data pembayaran klien asli.
 
 **Dokumen**: `docs/RUNBOOK.md` (persiapan GitHub/GHCR/DNS/S3 termasuk contoh IDCloudHost, setup server, migrasi, akun, monitoring UptimeRobot, deploy, rollback, backup/restore + uji restore bulanan, user, rotasi secret, insiden), `docs/users.template.csv`, `.env.production.example`.
 
-### Migrasi data — hasil DRY-RUN (di DB sementara; DB Docker lokal tidak diubah)
+### Migrasi data — DRY-RUN disetujui, `--apply` dijalankan (di DB sementara; DB Docker lokal tidak diubah)
 
 | Tabel | Aksi | Baris |
 |---|---|---|
@@ -91,6 +94,7 @@ production berjalan dan ada data pembayaran klien asli.
 | FpdSequence | dihapus (penomoran FPD production mulai 001) | 1 |
 | Expense MANUAL/MOBILE/WEBHOOK (+ alokasi) | dihapus | 0 |
 | Notification / ApiKey / RefreshToken | dihapus | 4 / 0 / 44 |
+| OverrunState | dihapus (tambahan saat `--apply`: pemindaian pertama di production mengirim ringkasan terkini ke PM & Direktur baru) | 31 |
 | ProjectMember akun demo | dihapus | 1 |
 | Expense.createdById / verifiedById | dialihkan ke Migrasi Sistem | 152 / 152 |
 | ImportMappingRule.createdById | dialihkan | 30 |
@@ -105,35 +109,67 @@ production berjalan dan ada data pembayaran klien asli.
 
 **Rekap sebelum = sesudah cleanup: YA** (`fbc04a3b…1435`). Tidak ada expense uji coba, sehingga realisasi tidak berubah.
 
+**File final** (laptop, `migrasi/20261014-2351/`, gitignored, chmod 600 — dihapus setelah import di server):
+
+| File | SHA-256 |
+|---|---|
+| `indotek-final.dump` | `419aecb7bb2b089af9611de16232cf13ab473c0e43caa0b4bb84c9ec4cb7ed90` |
+| `uploads-final.tar.gz` (hanya `.gitkeep`) | `0dacf536714a117ebb00d26f0acf6bff2088af198315f84f57dafe1eb66c575f` |
+| `manifest-final.txt` | jumlah baris per tabel + `REKAP_SHA256=fbc04a3b327e37120483517a0aac670f15b13a3913db0a72fd3dcf8102361435` |
+
+Isi: FundRequest 0, Notification 0, OverrunState 0, User 4 (Migrasi Sistem + 3 akun demo teranonimkan, semua nonaktif).
+
+**Penjaga baru di pemindaian over budget:** bila belum ada PM/Direktur aktif (kondisi tepat setelah import), lintasan
+ambang **tidak dicatat**, sehingga tidak "hangus" tanpa penerima. `create-users.sh` menjalankan pemindaian begitu
+akun PM/DIREKTUR dibuat; `scan-overruns.js` untuk pemindaian manual (RUNBOOK §5).
+
+### Sertifikat: Let's Encrypt STAGING untuk deploy pertama
+
+- `ACME_CA` di `.env.production.example` (dan hasil `gen-secrets.sh`) default **staging**; nilai production tercantum di komentar.
+- `deploy.sh` mendeteksi staging: mencetak catatan dan memakai `curl -k` untuk health check.
+- Langkah ganti ke production + verifikasi issuer: RUNBOOK §3.4.
+
+### Backlog Fase 3
+
+- **Tombol nonaktifkan/aktifkan user di UI** (ADMIN, Data Master → User), dengan audit log dan pencabutan sesi seperti
+  `user-status.sh`. Sampai saat itu: `./scripts/user-status.sh email nonaktif|aktif` (RUNBOOK §10).
+- Dashboard, cash flow, portal investor, laporan (ditunda — lihat atas).
+
 ### Yang perlu direview
 
-1. **Persetujuan migrasi:** dry-run di atas. Setelah disetujui saya jalankan `prepare-migration.sh … --apply` (membuat file final), lalu uji `import-to-prod.sh` ke stack prod lokal untuk acceptance migrasi (jumlah baris, Rekap, FundRequest = 0, akun aktif = 1, akun demo = 0) sebelum Anda menjalankannya di server.
-2. **Belum diuji di lingkungan nyata** (tidak ada akses): `server-setup.sh` di Ubuntu 24.04, sertifikat Let's Encrypt (lokal memakai CA internal Caddy), workflow CI (repo belum punya remote), endpoint IDCloudHost (`is3.cloudhost.id` — cek di panel). Disarankan uji pertama dengan `ACME_CA` staging.
-3. **Uji S3 lokal memakai versitygw**, bukan MinIO: image `minio/minio` tidak lagi bisa ditarik tanpa login, dan SeaweedFS macet saat menulis. Service di compose tetap bernama `minio` (profile `backup-test`, tidak jalan di production).
-4. **`OverrunState` ikut dimigrasi.** Pos/cluster yang saat ini sudah over tidak memicu notifikasi ulang di production; notifikasi baru hanya untuk lintasan ambang berikutnya. Bila PM/Direktur production sebaiknya menerima ringkasan kondisi saat ini, tabel ini bisa dikosongkan saat migrasi.
-5. **API production default 1 replika** (`dc up -d --scale api=2` bila perlu). Ukuran image API ±1,8 GB, sebagian besar Chromium untuk PDF.
-6. **Fase 3 ditunda** (lihat atas).
+1. **Belum diuji di lingkungan nyata** (tidak ada akses): `server-setup.sh` di Ubuntu 24.04, penerbitan sertifikat Let's Encrypt staging → production (lokal memakai CA internal Caddy), workflow CI (repo belum punya remote), endpoint IDCloudHost (`is3.cloudhost.id` — cek di panel).
+2. **Uji S3 lokal memakai versitygw**, bukan MinIO: image `minio/minio` tidak lagi bisa ditarik tanpa login, dan SeaweedFS macet saat menulis. Service di compose tetap bernama `minio` (profile `backup-test`, tidak jalan di production).
+3. **Notifikasi pertama terkirim saat `create-users.sh`**, bukan saat import. Bila PM & Direktur dibuat di dua batch CSV terpisah, batch pertama yang menerima ringkasan; yang dibuat belakangan tidak menerima ulang lintasan yang sama (hanya lintasan ambang berikutnya). Sarannya: buat PM & Direktur dalam satu CSV.
+4. **API production default 1 replika** (`dc up -d --scale api=2` bila perlu). Ukuran image API ±1,8 GB, sebagian besar Chromium untuk PDF.
+5. **Fase 3 ditunda** (lihat atas dan Backlog Fase 3).
 
 ### Checklist server (urutan; rincian di RUNBOOK)
 
-- [ ] **Laptop** — persetujuan dry-run migrasi → `./scripts/prepare-migration.sh migrasi/<tanggal> --apply` (§4.1)
+- [x] **Laptop** — dry-run migrasi disetujui → `./scripts/prepare-migration.sh migrasi/20261014-2351 --apply` (§4.1) — file final siap, hash di atas
+- [x] **Laptop** — uji `import-to-prod.sh` ke stack prod lokal → IMPORT LULUS + pemindaian pertama benar
 - [ ] **GitHub** — buat repo private `{{GHCR_OWNER}}/indotek-budget`, push `main`, tunggu CI hijau, catat tag image (§1.1)
 - [ ] **GitHub** — token classic `read:packages` untuk server (§1.2)
-- [ ] **DNS** — A record `{{DOMAIN}}` → IP VPS (§1.4)
+- [ ] **DNS** — A record `{{DOMAIN}}` → IP VPS; cek `dig +short {{DOMAIN}}` = IP VPS sebelum deploy (§1.4)
 - [ ] **Object storage** — bucket private + access key khusus backup hak minimal (§1.5)
 - [ ] **Server (root)** — `scp scripts/server-setup.sh` → `sudo bash server-setup.sh` (§2)
 - [ ] **Server** — uji `ssh deploy@<ip>` di terminal lain → `sudo bash server-setup.sh --lock-ssh` (§2)
 - [ ] **Server (deploy)** — deploy key read-only → `git clone … /opt/indotek` (§3.1)
 - [ ] **Server** — `./scripts/gen-secrets.sh …` → isi S3 key & `TAG` → simpan password admin & `RESTIC_PASSWORD` di password manager (§3.2)
-- [ ] **Server** — `docker login ghcr.io` (token read-only) → `pull` (§3.3)
-- [ ] **Laptop → server** — `scp` file migrasi final ke `/opt/indotek/migrasi/` (§4.1)
-- [ ] **Server** — `./scripts/import-to-prod.sh migrasi` → harus **IMPORT LULUS** (§4.2)
-- [ ] **Server** — `./scripts/deploy.sh <tag> --no-backup` (catat tag aktif) → `shred -u migrasi/*` (§4.2)
-- [ ] **Browser** — login admin `https://{{DOMAIN}}`, ganti password, cek Rekap (§5)
-- [ ] **Server** — `./scripts/create-users.sh users.csv` → bagikan password per orang → `shred` (§5)
+- [ ] **Server** — pastikan `ACME_CA` = **staging** di `.env.production` (`grep ^ACME_CA= .env.production`) (§3.4)
+- [ ] **Server** — `docker login ghcr.io` (token read-only) → `pull` → alias `dc` (§3.3)
+- [ ] **Laptop → server** — `scp` 3 file final (`indotek-final.dump`, `uploads-final.tar.gz`, `manifest-final.txt`) dari `migrasi/20261014-2351/` ke `/opt/indotek/migrasi/` (§4.1)
+- [ ] **Server** — `./scripts/import-to-prod.sh migrasi` → harus **IMPORT LULUS** (Rekap `fbc04a…1435`, FundRequest 0, akun aktif 1) (§4.2)
+- [ ] **Server** — `./scripts/deploy.sh <tag> --no-backup` → muncul `CATATAN: ACME_CA = Let's Encrypt STAGING`, health OK → `shred -u migrasi/*` (§4.2)
+- [ ] **Server** — sertifikat staging terbit: `curl -skvI https://{{DOMAIN}}/api/health` → issuer berisi `STAGING`, HTTP 200 (§3.4)
+- [ ] **Browser** — login admin `https://{{DOMAIN}}` (lewati peringatan sertifikat staging), ganti password, cek Rekap (§5)
+- [ ] **Server** — **ganti `ACME_CA` ke production** → `dc up -d --no-deps --force-recreate caddy` → issuer tanpa `STAGING`, `curl` tanpa `-k` OK → `./scripts/deploy.sh <tag> --no-backup` tanpa catatan STAGING (§3.4)
+- [ ] **Browser** — jendela private: gembok normal, tanpa peringatan
+- [ ] **Server** — `./scripts/create-users.sh users.csv` (PM & Direktur dalam satu CSV) → output **"Pemindaian over budget: … 1 total cluster …"** → bagikan password per orang → `shred` (§5)
+- [ ] **Browser (PM/Direktur)** — lonceng notifikasi: *Over budget: Subfeeder - TEPAS RW 05 NGAWI … 105,9%* + ringkasan harian pos over (§5)
 - [ ] **Server** — `./scripts/backup-now.sh awal` → `dc exec backup restic snapshots` (§9)
-- [ ] **UptimeRobot** — monitor keyword `https://{{DOMAIN}}/api/health` + SSL expiry (§6.1)
+- [ ] **UptimeRobot** — monitor keyword `https://{{DOMAIN}}/api/health` + SSL expiry (§6.1) — setelah ganti ke production, agar tidak alarm sertifikat
 - [ ] **Kalender** — uji restore bulanan (§9.1), rotasi token GHCR tahunan (§11)
+- [ ] **Nanti** — nonaktifkan/aktifkan user lewat `./scripts/user-status.sh` (§10) sampai tombol UI dibuat di Fase 3
 
 ## Penutupan Fase 2 — ringkasan (15 Oktober 2026)
 

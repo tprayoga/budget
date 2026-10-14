@@ -184,7 +184,48 @@ nano .env.production       # isi S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY; set TAG
 ```bash
 read -rs GHCR_TOKEN && echo "$GHCR_TOKEN" | docker login ghcr.io -u {{GHCR_OWNER}} --password-stdin && unset GHCR_TOKEN
 docker compose -p indotek -f docker-compose.prod.yml --env-file .env.production pull
+# alias `dc` dipakai di seluruh RUNBOOK (jalankan dari /opt/indotek):
+echo "alias dc='docker compose -p indotek -f docker-compose.prod.yml --env-file .env.production'" >> ~/.bashrc && source ~/.bashrc
 ```
+
+### 3.4 Sertifikat: Let's Encrypt STAGING dulu, lalu ganti ke production
+
+`gen-secrets.sh` mengisi `ACME_CA` dengan **staging** (`.env.production`):
+
+| `ACME_CA` | Nilai |
+|---|---|
+| staging (deploy pertama) | `https://acme-staging-v02.api.letsencrypt.org/directory` |
+| production | `https://acme-v02.api.letsencrypt.org/directory` |
+
+Staging memakai batas permintaan yang longgar, sehingga salah DNS/port saat deploy pertama tidak menghabiskan
+kuota Let's Encrypt production (5 sertifikat gagal per jam per domain). Selama staging:
+
+- Browser memperingatkan **"sertifikat tidak tepercaya"** — wajar. Untuk login uji, lanjutkan lewat peringatan.
+- `deploy.sh` mencetak `CATATAN: ACME_CA = Let's Encrypt STAGING` dan health check memakai `curl -k`.
+- Cek sertifikat staging sudah terbit (bukan error ACME):
+
+```bash
+curl -skvI https://{{DOMAIN}}/api/health 2>&1 | grep -iE 'issuer|HTTP/'
+# issuer: ... (STAGING) ...   dan   HTTP/2 200
+dc logs caddy | grep -iE 'certificate obtained|error'
+```
+
+**Ganti ke production** — setelah sertifikat staging terbit, import lulus (§4.2), dan login admin berhasil (§5):
+
+```bash
+cd /opt/indotek
+sed -i 's#^ACME_CA=.*#ACME_CA=https://acme-v02.api.letsencrypt.org/directory#' .env.production
+grep ^ACME_CA= .env.production
+dc up -d --no-deps --force-recreate caddy
+sleep 20; dc logs --since 2m caddy | grep -iE 'certificate obtained|error'
+curl -svI https://{{DOMAIN}}/api/health 2>&1 | grep -iE 'issuer|HTTP/'
+# issuer: C=US; O=Let's Encrypt; CN=R1x / E-x   (TANPA "STAGING")   dan   HTTP/2 200 — tanpa -k
+./scripts/deploy.sh <tag-aktif> --no-backup    # tidak lagi mencetak CATATAN STAGING; health check tanpa -k
+```
+
+Caddy menyimpan sertifikat per CA, jadi sertifikat production diminta baru (staging tidak dipakai lagi). Buka
+`https://{{DOMAIN}}` di browser (jendela private) — gembok normal tanpa peringatan. Bila gagal: `dc logs caddy`,
+kembalikan `ACME_CA` ke staging, perbaiki penyebabnya (DNS, port 80/443), lalu ulangi.
 
 ---
 
@@ -251,6 +292,22 @@ shred -u akun-baru-*.csv users.csv
 ```
 
 Setiap akun wajib mengganti password saat login pertama. Email yang sudah ada dilewati.
+
+**Pemindaian over budget pertama.** Status over budget dikosongkan saat migrasi, dan pemindaian tidak mencatat apa
+pun selama belum ada PM/Direktur aktif. Begitu `create-users.sh` membuat akun PM atau DIREKTUR, script langsung
+menjalankan pemindaian dan mencetak hasilnya, contoh:
+
+```
+Pemindaian over budget: 31 pos/cluster over, 1 total cluster (notifikasi langsung), 30 pos (ringkasan harian), 4 notifikasi baru
+```
+
+PM & Direktur menerima notifikasi segera untuk total cluster yang > 100% (mis. Subfeeder - TEPAS RW 05 NGAWI) dan
+satu ringkasan harian berisi pos yang over. Cek di aplikasi (ikon lonceng) setelah mereka login. Pemindaian manual
+(aman diulang — hanya lintasan ambang baru yang dikirim):
+
+```bash
+dc run --rm --no-deps api node dist-scripts/scripts/scan-overruns.js
+```
 
 ---
 
