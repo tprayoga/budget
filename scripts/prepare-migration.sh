@@ -16,7 +16,8 @@ echo "== DB sementara $TMP dari $DIR/indotek-lokal.dump"
 psqlt -d postgres -c "drop database if exists $TMP with (force)" -c "create database $TMP" >/dev/null
 dcl exec -T postgres pg_restore -U "$PGU" -d "$TMP" --no-owner --exit-on-error < "$DIR/indotek-lokal.dump"
 URL="postgresql://${PGU}:${POSTGRES_PASSWORD:-indotek}@localhost:5432/${TMP}?schema=public"
-(cd apps/api && DATABASE_URL="$URL" npx ts-node --transpile-only scripts/migration-cleanup.ts ${APPLY:+--apply} --report "../../$DIR/cleanup-${APPLY:+apply}${APPLY:-dryrun}.json")
+REPORT="$DIR/cleanup-$([ "$APPLY" = "--apply" ] && echo apply || echo dryrun).json"
+(cd apps/api && DATABASE_URL="$URL" npx ts-node --transpile-only scripts/migration-cleanup.ts ${APPLY:+--apply} --report "$REPORT")
 if [ "$APPLY" != "--apply" ]; then
   echo
   echo "DRY-RUN selesai (tidak ada yang diubah). Setelah disetujui: ./scripts/prepare-migration.sh $DIR --apply"
