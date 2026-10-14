@@ -66,7 +66,7 @@ async function main() {
 
   // simulasi pencocokan referensi implementasi yang belum diterapkan
   const refs = await prisma.clientInvoiceRef.findMany({ where: { projectId: project.id, appliedPaymentId: null, blockTitle: { contains: 'Implementasi' } } });
-  console.log('\n=== Simulasi pencocokan referensi implementasi setelah pemecahan (aturan C: Paid → DPP + PPN − PPh; Unpaid → DPP + PPN; ± Rp 10)');
+  console.log(`\n=== Simulasi pencocokan referensi implementasi setelah pemecahan (nilai referensi client: ${project.client.referenceValueType}; ± Rp 10)`);
   const taken = new Set<string>();
   let ok = 0;
   for (const r of refs) {
@@ -74,16 +74,16 @@ async function main() {
     const sub = /subfeeder/i.test(block);
     const cands = simTermins
       .filter((t) => !taken.has(t.id) && t.label.includes(sub ? 'SUBFEEDER' : 'CLUSTER'))
-      .map((t) => ({ ...t, expectedNet: moneyStr(referenceTarget(t, r.paid)) }));
+      .map((t) => ({ ...t, expectedNet: moneyStr(referenceTarget(t, project.client.referenceValueType)) }));
     const m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
     if (m.match) {
       taken.add(m.match.id);
       ok++;
     }
-    const byNet = !m.match && !r.paid ? simTermins.find((t) => dec(t.expectedNet).minus(dec(r.netAmount?.toString() ?? 0)).abs().lte(10)) : undefined;
+    const byNet = !m.match && project.client.referenceValueType !== 'NET' ? simTermins.find((t) => dec(t.expectedNet).minus(dec(r.netAmount?.toString() ?? 0)).abs().lte(10)) : undefined;
     console.log(
       `   ${r.invoiceNo} ${block} ${r.paid ? 'Paid' : 'Unpaid'} ${f(r.netAmount ?? 0)} → ${
-        m.match ? `COCOK ${m.match.label} (${r.paid ? 'net' : 'tagihan'} ${f(m.match.expectedNet)})` : `tidak cocok${byNet ? ` (nilainya = net diharapkan ${byNet.label}, bukan tagihan)` : ''}`
+        m.match ? `COCOK ${m.match.label} (${project.client.referenceValueType === 'NET' ? 'net' : 'tagihan'} ${f(m.match.expectedNet)})` : `tidak cocok${byNet ? ` (nilainya = net diharapkan ${byNet.label}, bukan tagihan)` : ''}`
       }`,
     );
   }

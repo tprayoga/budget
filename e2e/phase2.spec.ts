@@ -163,7 +163,7 @@ test('Termin klien: badge tanggal invoice (permit Semarang), inbox FINANCE, tera
   const refs = page.getByRole('region', { name: 'Referensi tagihan RAB' });
   const ref = refs.getByRole('row', { name: /I2628-00139/ });
   await expect(ref).toContainText('20.044.750');
-  await expect(ref.getByTestId('ref-suggestion')).toContainText(/cocok \(net dibayar\) → PO Permit/);
+  await expect(ref.getByTestId('ref-suggestion')).toContainText(/cocok \(net\) → PO Permit/);
   await expect(refs.getByRole('button', { name: /Terapkan semua yang cocok/ })).toBeVisible();
   await page.screenshot({ path: path.join(SHOTS, 'terapkan-referensi.png') });
   await ref.getByRole('button', { name: 'Konfirmasi' }).click();

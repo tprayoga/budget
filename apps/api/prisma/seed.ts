@@ -11,6 +11,7 @@ import { applyPatch22 } from '../src/import/patch-2-2';
 import { applyPatch23 } from '../src/import/patch-2-3';
 import { applyPatch24 } from '../src/import/patch-2-4';
 import { applyCcsiDecisions } from '../src/import/patch-2-5-ccsi';
+import { applyPatch26 } from '../src/import/patch-2-6-ref-value';
 import { SettingsService } from '../src/settings/settings.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
@@ -261,6 +262,8 @@ async function main() {
   if (patch24.length) console.log(`Patch keputusan 2.4: ${patch24.join('; ')}`);
   const patch25 = await applyCcsiDecisions(prisma, audit, admin?.id ?? null, true);
   if (patch25.length) console.log(`Patch keputusan CCSI (2.5): ${patch25.length} langkah`);
+  const patch26 = await applyPatch26(prisma, audit, admin?.id ?? null);
+  if (patch26.length) console.log(`Patch 2.6: ${patch26.join('; ')}`);
 
   const counts = await prisma.project.findMany({
     select: { code: true, _count: { select: { clusters: true } } },

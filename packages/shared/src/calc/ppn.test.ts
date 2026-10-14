@@ -58,3 +58,19 @@ describe('Margin permit hanya PO PERMIT (SND dikeluarkan)', () => {
     expect(moneyStr(r.marginPermit)).toBe('-1081510.92');
   });
 });
+
+describe('Acuan W — nilai referensi per client (INVOICE_TOTAL / NET)', () => {
+  it('EVANTAMA NET: permit RW 08 4.875.750 = 4.500.000 + PPN 495.000 − PPh 119.250; Sinagar permit t2 20.044.750', async () => {
+    const { referenceTarget } = await import('./realization');
+    const rw08 = terminTax({ amount: '4500000', ppnRate: '0.11', pphRate: '0.0265' });
+    expect(moneyStr(rw08.ppn)).toBe('495000.00');
+    expect(moneyStr(rw08.pph)).toBe('119250.00');
+    expect(moneyStr(referenceTarget(rw08, 'NET'))).toBe('4875750.00');
+    expect(moneyStr(referenceTarget(rw08, 'INVOICE_TOTAL'))).toBe('4995000.00');
+    expect(moneyStr(referenceTarget(terminTax({ amount: '18500000', ppnRate: '0.11', pphRate: '0.0265' }), 'NET'))).toBe('20044750.00');
+  });
+  it('CCSI INVOICE_TOTAL dengan PPN 0: tagihan = DPP', async () => {
+    const { referenceTarget } = await import('./realization');
+    expect(moneyStr(referenceTarget(terminTax({ amount: '10212800', ppnRate: '0', pphRate: '0.025' }), 'INVOICE_TOTAL'))).toBe('10212800.00');
+  });
+});

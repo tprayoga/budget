@@ -101,12 +101,13 @@ export function calcRealizedProfit(
 export const REF_MATCH_TOLERANCE = 10;
 
 /**
- * Nilai pembanding termin untuk referensi tagihan RAB (aturan Fase 2.4 C, semua client):
- *  - referensi Paid    → net diharapkan (DPP + PPN − PPh), diterapkan sebagai PAID;
- *  - referensi Unpaid  → nilai tagihan (DPP + PPN), diterapkan sebagai INVOICED.
+ * Nilai pembanding termin untuk referensi tagihan RAB — diatur PER CLIENT (keputusan penutup Fase 2):
+ *  - INVOICE_TOTAL (default; ADW, CCSI): referensi = tagihan DPP + PPN;
+ *  - NET (EVANTAMA): referensi = net DPP + PPN − PPh, untuk semua status.
+ * Status Paid/Unpaid di referensi hanya menentukan termin diterapkan sebagai PAID atau INVOICED.
  */
-export function referenceTarget(tax: { invoiceTotal: Num; expectedNet: Num }, paid: boolean): D {
-  return dec(paid ? tax.expectedNet : tax.invoiceTotal);
+export function referenceTarget(tax: { invoiceTotal: Num; expectedNet: Num }, valueType: 'INVOICE_TOTAL' | 'NET'): D {
+  return dec(valueType === 'NET' ? tax.expectedNet : tax.invoiceTotal);
 }
 
 /**

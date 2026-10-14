@@ -37,6 +37,8 @@ export interface Client {
   name: string;
   /** PPN termin untuk client ini (null = ikut Setting global) */
   ppnRate?: string | null;
+  /** Nilai referensi tagihan RAB client: tagihan (DPP + PPN) atau net (DPP + PPN − PPh) */
+  referenceValueType?: 'INVOICE_TOTAL' | 'NET';
 }
 
 export interface Project {
@@ -421,7 +423,7 @@ export interface ClientInvoiceRef {
   paid: boolean;
   appliedPaymentId: string | null;
   appliedAt: string | null;
-  suggestion: { mode: 'NET' | 'DPP'; basis?: 'NET_PAID' | 'INVOICE' | 'DPP'; perluKonfirmasiPajak: boolean; paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
+  suggestion: { mode: 'NET' | 'DPP'; basis?: 'NET' | 'INVOICE_TOTAL' | 'DPP'; perluKonfirmasiPajak: boolean; paymentId: string; clusterId: string; clusterName: string; kind: TerminKind; termin: number; expectedNet: string; selisih: string } | null;
   ambiguous: boolean;
 }
 

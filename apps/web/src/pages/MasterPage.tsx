@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { ROLE_LABEL } from '@indotek/shared';
 import { api, errorMessage } from '../api/client';
 import type { Client, Project } from '../api/types';
+import { REFERENCE_VALUE_TYPES, REFERENCE_VALUE_TYPE_LABEL } from '@indotek/shared';
 import { pctInputToRatio, ratioToPctInput } from '../lib/format';
 import { useAuth } from '../auth/AuthContext';
 import { ErrorBox, Field, Modal, PageHeader, Spinner } from '../components/ui';
@@ -131,6 +132,10 @@ function ClientPpnRow({ client }: { client: Client }) {
   const [edit, setEdit] = useState(false);
   const [v, setV] = useState(client.ppnRate != null ? ratioToPctInput(client.ppnRate) : '');
   const [reason, setReason] = useState('');
+  const saveRef = useMutation({
+    mutationFn: (referenceValueType: string) => api(`/clients/${client.id}/reference-value-type`, { method: 'PATCH', json: { referenceValueType } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['clients'] }),
+  });
   const save = useMutation({
     mutationFn: () => api(`/clients/${client.id}/ppn`, { method: 'PATCH', json: { ppnRate: v.trim() === '' ? null : pctInputToRatio(v), reason: reason || null } }),
     onSuccess: async () => {
@@ -146,6 +151,22 @@ function ClientPpnRow({ client }: { client: Client }) {
           PPN termin: {client.ppnRate != null ? `${ratioToPctInput(client.ppnRate)}%` : 'ikut global'}
           {can('ADMIN') && !edit && <button className="ml-2 text-brand hover:underline" onClick={() => setEdit(true)}>ubah</button>}
         </span>
+      </div>
+      <div className="mt-0.5 flex items-center justify-end gap-2 text-xs text-slate-500">
+        Nilai referensi RAB:
+        {can('ADMIN') ? (
+          <select
+            className="input w-auto py-0.5 text-xs"
+            value={client.referenceValueType ?? 'INVOICE_TOTAL'}
+            disabled={saveRef.isPending}
+            onChange={(e) => saveRef.mutate(e.target.value)}
+            aria-label={`Nilai referensi ${client.name}`}
+          >
+            {REFERENCE_VALUE_TYPES.map((t) => <option key={t} value={t}>{REFERENCE_VALUE_TYPE_LABEL[t]}</option>)}
+          </select>
+        ) : (
+          <span>{REFERENCE_VALUE_TYPE_LABEL[client.referenceValueType ?? 'INVOICE_TOTAL']}</span>
+        )}
       </div>
       {edit && (
         <div className="mt-1 flex flex-wrap items-center gap-2">

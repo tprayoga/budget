@@ -16,7 +16,7 @@ import type { AuthUser } from '../src/auth/auth.types';
 async function report(prisma: PrismaClient, code: string) {
   const f = (v: { toString(): string }) => formatAngka(moneyStr(v.toString()));
   const project = await prisma.project.findUniqueOrThrow({ where: { code } });
-  const { refs, matches } = await referenceMatches(prisma, project.id);
+  const { refs, matches, valueType } = await referenceMatches(prisma, project.id);
   const payments = await prisma.clientPayment.findMany({ where: { cluster: { projectId: project.id } }, include: { cluster: true } });
   console.log(`\n=== ${code}: ${refs.length} referensi`);
   for (const r of refs) {
@@ -25,11 +25,11 @@ async function report(prisma: PrismaClient, code: string) {
     if (r.appliedPaymentId) {
       const p = payments.find((x) => x.id === r.appliedPaymentId)!;
       const tax = paymentTax(p);
-      const target = r.paid ? tax.expectedNet : tax.invoiceTotal;
+      const target = valueType === 'NET' ? tax.expectedNet : tax.invoiceTotal;
       const ok = dec(r.netAmount?.toString() ?? 0).minus(target).abs().lte(10);
-      line = `SUDAH DITERAPKAN → ${p.cluster.name} ${p.kind} termin ${p.termin} [${p.status}] · aturan C ${r.paid ? 'net' : 'tagihan'} ${f(target)} → ${ok ? 'tetap cocok' : `TIDAK cocok lagi (nilai referensi = net ${f(tax.expectedNet)})`}`;
+      line = `SUDAH DITERAPKAN → ${p.cluster.name} ${p.kind} termin ${p.termin} [${p.status}] · ${valueType === 'NET' ? 'net' : 'tagihan'} ${f(target)} → ${ok ? 'cocok' : 'TIDAK cocok'}`;
     } else if (m?.suggestion) {
-      line = `${m.suggestion.mode === 'DPP' ? 'COCOK DI DPP (perlu konfirmasi pajak)' : `COCOK (${m.suggestion.basis === 'INVOICE' ? 'tagihan DPP + PPN' : 'net DPP + PPN − PPh'})`} → ${m.suggestion.clusterName} ${m.suggestion.kind} termin ${m.suggestion.termin} (${f(m.suggestion.expectedNet)})`;
+      line = `${m.suggestion.mode === 'DPP' ? 'COCOK DI DPP (perlu konfirmasi pajak)' : `COCOK (${m.suggestion.basis === 'INVOICE_TOTAL' ? 'tagihan DPP + PPN' : 'net DPP + PPN − PPh'})`} → ${m.suggestion.clusterName} ${m.suggestion.kind} termin ${m.suggestion.termin} (${f(m.suggestion.expectedNet)})`;
     } else {
       // petunjuk: apakah nilainya sama dengan net diharapkan suatu termin (pola aturan lama)?
       const cands = payments.filter((p) => !r.clusterId || p.clusterId === r.clusterId).map((p) => ({ id: p.id, termin: p.termin, expectedNet: paymentTax(p).expectedNet, p }));

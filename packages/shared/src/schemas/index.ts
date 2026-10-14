@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   PO_KINDS,
+  REFERENCE_VALUE_TYPES,
   AGING_TYPES,
   ALLOCATION_METHODS,
   CLIENT_PAYMENT_STATUSES,
@@ -53,6 +54,11 @@ export const clientPpnSchema = z.object({
   reason: z.string().trim().max(300).nullish(),
 });
 export type ClientPpnInput = z.infer<typeof clientPpnSchema>;
+export const clientRefValueSchema = z.object({
+  referenceValueType: z.enum(REFERENCE_VALUE_TYPES),
+  reason: z.string().trim().max(300).nullish(),
+});
+export type ClientRefValueInput = z.infer<typeof clientRefValueSchema>;
 
 export const projectSchema = z.object({
   code: z

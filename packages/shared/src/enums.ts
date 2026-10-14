@@ -221,3 +221,11 @@ export const CLIENT_PAYMENT_STATUS_LABEL: Record<ClientPaymentStatus, string> = 
   INVOICED: 'Ditagih',
   PAID: 'Dibayar',
 };
+
+/** Nilai yang dicatat client di referensi tagihan RAB (per client, bukan per status). */
+export const REFERENCE_VALUE_TYPES = ['INVOICE_TOTAL', 'NET'] as const;
+export type ReferenceValueType = (typeof REFERENCE_VALUE_TYPES)[number];
+export const REFERENCE_VALUE_TYPE_LABEL: Record<ReferenceValueType, string> = {
+  INVOICE_TOTAL: 'Tagihan (DPP + PPN)',
+  NET: 'Net (DPP + PPN − PPh)',
+};

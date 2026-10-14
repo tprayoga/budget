@@ -1,6 +1,6 @@
 import { Controller, Delete, Get, Param, Patch, Post, ConflictException } from '@nestjs/common';
 import { ApiCookieAuth, ApiTags } from '@nestjs/swagger';
-import { clientPpnSchema, clientSchema, type ClientPpnInput } from '@indotek/shared';
+import { clientPpnSchema, clientRefValueSchema, clientSchema, type ClientPpnInput, type ClientRefValueInput } from '@indotek/shared';
 import { rate, s } from '../common/decimal';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -52,6 +52,17 @@ export class ClientsController {
     const before = await this.prisma.client.findUniqueOrThrow({ where: { id } });
     const c = await this.prisma.client.update({ where: { id }, data: { ppnRate: body.ppnRate === null ? null : rate(body.ppnRate) } });
     await this.audit.diff(this.prisma, user.id, 'Client', id, { ppnRate: s(before.ppnRate), alasan: null }, { ppnRate: s(c.ppnRate), alasan: body.reason ?? null });
+    return c;
+  }
+
+  /** Nilai yang dicatat di referensi tagihan RAB client ini (INVOICE_TOTAL / NET) — dasar pencocokan. Khusus ADMIN. */
+  @Patch(':id/reference-value-type')
+  @Roles('ADMIN')
+  @ApiZodBody(clientRefValueSchema)
+  async setRefValue(@CurrentUser() user: AuthUser, @Param('id') id: string, @ZBody(clientRefValueSchema) body: ClientRefValueInput) {
+    const before = await this.prisma.client.findUniqueOrThrow({ where: { id } });
+    const c = await this.prisma.client.update({ where: { id }, data: { referenceValueType: body.referenceValueType } });
+    await this.audit.diff(this.prisma, user.id, 'Client', id, { referenceValueType: before.referenceValueType, alasan: null }, { referenceValueType: c.referenceValueType, alasan: body.reason ?? null });
     return c;
   }
 

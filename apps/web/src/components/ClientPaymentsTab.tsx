@@ -238,7 +238,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
           <div>
             <h3 className="text-sm font-semibold">Referensi tagihan dari file RAB</h3>
-            <p className="text-xs text-slate-500">Referensi Unpaid dicocokkan dengan tagihan (DPP + PPN), referensi Paid dengan net (DPP + PPN − PPh), ± Rp 10. Usulan tetap harus dikonfirmasi.</p>
+            <p className="text-xs text-slate-500">Referensi dicocokkan dengan tagihan (DPP + PPN) atau net (DPP + PPN − PPh) sesuai setting client, ± Rp 10; status Paid/Unpaid menentukan Dibayar/Ditagih. Usulan tetap harus dikonfirmasi.</p>
           </div>
           {editable && matched.length > 0 && (
             <button className="btn-primary px-2 py-1 text-xs" onClick={() => setBulkOpen(true)}>Terapkan semua yang cocok ({matched.length})</button>
@@ -264,7 +264,7 @@ export function ClientPaymentsTab({ clusterId }: { clusterId: string }) {
                       </span>
                     ) : r.suggestion ? (
                       <span className="text-emerald-700">
-                        <b>cocok</b>{r.suggestion.basis === 'INVOICE' ? ' (tagihan)' : r.suggestion.basis === 'NET_PAID' ? ' (net dibayar)' : ''} → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
+                        <b>cocok</b>{r.suggestion.basis === 'INVOICE_TOTAL' ? ' (tagihan)' : r.suggestion.basis === 'NET' ? ' (net)' : ''} → {r.suggestion.clusterId === clusterId ? termLabelById(r.suggestion.paymentId) : `${r.suggestion.clusterName} termin ${r.suggestion.termin}`}
                         {r.suggestion.selisih !== '0.00' && <span className="text-slate-500"> (selisih {formatAngka(r.suggestion.selisih, 2)})</span>}
                       </span>
                     ) : r.ambiguous ? (

@@ -134,11 +134,18 @@ model RefreshToken {
   @@index([userId])
 }
 
+enum ReferenceValueType {
+  INVOICE_TOTAL
+  NET
+}
+
 model Client {
   id        String    @id @default(cuid())
   name      String    @unique
   /// Tarif PPN termin klien untuk client ini (override Setting global; project setting tetap lebih tinggi). null = ikut global
   ppnRate   Decimal? @db.Decimal(16, 12)
+  /// Nilai yang dicatat di referensi tagihan RAB client ini: INVOICE_TOTAL (DPP + PPN) atau NET (DPP + PPN − PPh)
+  referenceValueType ReferenceValueType @default(INVOICE_TOTAL)
   createdAt DateTime  @default(now())
   projects  Project[]
   terminTemplates TerminTemplate[]

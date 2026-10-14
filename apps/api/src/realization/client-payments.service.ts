@@ -130,12 +130,12 @@ function flat(p: ClientPayment | null) {
 
 export interface RefSuggestion {
   /**
-   * NET = nilai referensi cocok dengan nilai pembanding aturan C (Paid: DPP + PPN − PPh; Unpaid: DPP + PPN);
+   * NET = nilai referensi cocok dengan nilai pembanding sesuai setting client (Client.referenceValueType);
    * DPP = nilai referensi = DPP termin (tanpa PPN/PPh) — perlu konfirmasi pajak.
    */
   mode: 'NET' | 'DPP';
-  /** Nilai pembanding yang dipakai: NET_PAID (net diharapkan), INVOICE (tagihan), DPP. */
-  basis: 'NET_PAID' | 'INVOICE' | 'DPP';
+  /** Nilai pembanding yang dipakai (setting client): NET (DPP + PPN − PPh), INVOICE_TOTAL (DPP + PPN), atau DPP. */
+  basis: 'NET' | 'INVOICE_TOTAL' | 'DPP';
   /** Mode DPP: perlu konfirmasi pajak (mis. invoice tanpa PPN) — tidak ikut "Terapkan semua yang cocok". */
   perluKonfirmasiPajak: boolean;
   paymentId: string;
@@ -153,6 +153,8 @@ export interface RefSuggestion {
  * Satu termin hanya diusulkan untuk satu referensi (yang pertama, urut invoice).
  */
 export async function referenceMatches(db: Db, projectId: string) {
+  const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, include: { client: true } });
+  const valueType = project.client.referenceValueType;
   const refs = await db.clientInvoiceRef.findMany({ where: { projectId }, orderBy: [{ blockTitle: 'asc' }, { termin: 'asc' }, { invoiceNo: 'asc' }] });
   const payments = await db.clientPayment.findMany({
     where: { cluster: { projectId }, status: { not: 'PAID' }, invoiceRefs: { none: {} } },
@@ -165,10 +167,10 @@ export async function referenceMatches(db: Db, projectId: string) {
       out.set(r.id, { suggestion: null, ambiguous: false });
       continue;
     }
-    // aturan C: Paid → net diharapkan (DPP + PPN − PPh); Unpaid → tagihan (DPP + PPN)
+    // nilai pembanding per client (INVOICE_TOTAL / NET); status Paid/Unpaid hanya menentukan PAID vs INVOICED
     const cands = payments
       .filter((p) => !taken.has(p.id) && (!r.clusterId || p.clusterId === r.clusterId))
-      .map((p) => ({ id: p.id, termin: p.termin, expectedNet: referenceTarget(paymentTax(p), r.paid), group: p.poId, p }));
+      .map((p) => ({ id: p.id, termin: p.termin, expectedNet: referenceTarget(paymentTax(p), valueType), group: p.poId, p }));
     let m = matchReferenceToTermin({ netAmount: r.netAmount?.toString() ?? null, termin: r.termin }, cands);
     let mode: 'NET' | 'DPP' = 'NET';
     if (!m.match && !m.ambiguous) {
@@ -188,7 +190,7 @@ export async function referenceMatches(db: Db, projectId: string) {
       out.set(r.id, {
         suggestion: {
           mode,
-          basis: mode === 'DPP' ? 'DPP' : r.paid ? 'NET_PAID' : 'INVOICE',
+          basis: mode === 'DPP' ? 'DPP' : valueType,
           perluKonfirmasiPajak: mode === 'DPP',
           paymentId: m.match.id,
           clusterId: m.match.p.clusterId,
@@ -202,7 +204,7 @@ export async function referenceMatches(db: Db, projectId: string) {
       });
     } else out.set(r.id, { suggestion: null, ambiguous: m.ambiguous });
   }
-  return { refs, matches: out };
+  return { refs, matches: out, valueType };
 }
 
 /**

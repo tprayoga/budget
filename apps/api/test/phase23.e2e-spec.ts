@@ -350,7 +350,10 @@ describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayara
     await ctx.api('admin').patch(`/clients/${ccsi.id}/ppn`, { ppnRate: original }).expect(200);
   });
 
-  it('aturan C: referensi Unpaid = tagihan (DPP + PPN); referensi = DPP termin → "cocok di DPP" (perlu konfirmasi pajak), tidak diterapkan otomatis', async () => {
+  it('nilai referensi per client: EVANTAMA = NET untuk semua status (Unpaid → INVOICED); referensi = DPP termin → "cocok di DPP" (perlu konfirmasi pajak)', async () => {
+    const ev = await ctx.prisma.client.findUniqueOrThrow({ where: { name: 'PT Evantama Network System' } });
+    expect(ev.referenceValueType).toBe('NET');
+    await ctx.api('finance').patch(`/clients/${ev.id}/reference-value-type`, { referenceValueType: 'INVOICE_TOTAL' }).expect(403);
     const rw04 = await clusterId(ctx.prisma, 'EVANTAMA', 'Cluster Kersanagara RW 04 Tasik');
     const c = await cluster(rw04);
     const list0 = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
@@ -364,12 +367,19 @@ describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayara
     const res = await ctx.api('finance').post(`/clusters/${rw04}/client-payments/apply-matched`, { refIds: [dpp.id] }).expect(201);
     expect(res.body.applied).toEqual([]);
     await ctx.prisma.clientInvoiceRef.delete({ where: { id: dpp.id } });
-    // Unpaid = tagihan DPP + PPN → cocok (INVOICE) → diterapkan sebagai INVOICED
-    const inv = await ctx.prisma.clientInvoiceRef.create({
-      data: { sourceRef: 'UJI:INV', projectId: c.projectId, clusterId: rw04, termin: 1, invoiceNo: 'INV-UJI-INV', netAmount: t1.invoiceTotal, statusText: 'Unpaid', paid: false },
+    // tagihan DPP + PPN tidak cocok untuk client NET
+    const tagihan = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:TAGIHAN', projectId: c.projectId, clusterId: rw04, termin: 1, invoiceNo: 'INV-UJI-TAG', netAmount: t1.invoiceTotal, statusText: 'Unpaid', paid: false },
     });
     list = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
-    expect(list.body.invoiceRefs.find((x: { id: string }) => x.id === inv.id).suggestion).toMatchObject({ mode: 'NET', basis: 'INVOICE', paymentId: t1.id });
+    expect(list.body.invoiceRefs.find((x: { id: string }) => x.id === tagihan.id).suggestion).toBeNull();
+    await ctx.prisma.clientInvoiceRef.delete({ where: { id: tagihan.id } });
+    // Unpaid = net DPP + PPN − PPh → cocok (NET) → diterapkan sebagai INVOICED
+    const inv = await ctx.prisma.clientInvoiceRef.create({
+      data: { sourceRef: 'UJI:INV', projectId: c.projectId, clusterId: rw04, termin: 1, invoiceNo: 'INV-UJI-INV', netAmount: t1.expectedNet, statusText: 'Unpaid', paid: false },
+    });
+    list = await ctx.api('finance').get(`/clusters/${rw04}/client-payments`).expect(200);
+    expect(list.body.invoiceRefs.find((x: { id: string }) => x.id === inv.id).suggestion).toMatchObject({ mode: 'NET', basis: 'NET', paymentId: t1.id });
     await ctx.api('finance').post(`/clusters/${rw04}/client-payments/apply-matched`, { refIds: [inv.id] }).expect(201);
     expect((await ctx.prisma.clientPayment.findUniqueOrThrow({ where: { id: t1.id } })).status).toBe('INVOICED');
     await ctx.prisma.clientInvoiceRef.update({ where: { id: inv.id }, data: { appliedPaymentId: null } });
@@ -400,7 +410,15 @@ describe('Perbaikan 2.4 — PPN per client, pencocokan "cocok di DPP", pembayara
       data: { sourceRef: 'UJI:CCSI-004', projectId: c.projectId, clusterId: null, invoiceNo: 'INV-UJI-004', netAmount: '16325969', statusText: 'Unpaid', paid: false },
     });
     const l2 = await ctx.api('finance').get(`/clusters/${kal}/client-payments`).expect(200);
-    expect(l2.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id).suggestion).toMatchObject({ mode: 'NET', basis: 'INVOICE', paymentId: impl[0].id, termin: 1 });
+    // termin terkecil yang belum diambil referensi lain (INV-RAA/004 asli bisa sudah mengambil termin 1 bila RAB diimpor lebih dulu)
+    const takenByOthers = new Set(
+      l2.body.invoiceRefs
+        .filter((x: { id: string }) => x.id !== ref.id)
+        .map((x: { suggestion: { paymentId: string } | null; appliedPaymentId: string | null }) => x.suggestion?.paymentId ?? x.appliedPaymentId)
+        .filter(Boolean),
+    );
+    const expected = impl.slice(0, 3).find((p: { id: string; status: string }) => !takenByOthers.has(p.id) && p.status !== 'PAID');
+    expect(l2.body.invoiceRefs.find((x: { id: string }) => x.id === ref.id).suggestion).toMatchObject({ mode: 'NET', basis: 'INVOICE_TOTAL', paymentId: expected.id, termin: expected.termin });
     await ctx.prisma.clientInvoiceRef.delete({ where: { id: ref.id } });
   });
 
