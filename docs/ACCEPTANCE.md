@@ -391,3 +391,18 @@ Dites di `packages/shared/src/calc/{ppn,termin-retensi}.test.ts` dan `apps/api/t
 - **Aturan C:** referensi Unpaid dibandingkan dengan tagihan (DPP + PPN), referensi Paid dengan net (DPP + PPN − PPh), ± Rp 10.
   - Contoh: Kersanagara RW 04 permit termin 1 DPP 2.500.000; referensi Unpaid 2.775.000 → cocok (INVOICED); referensi 2.500.000 → "cocok di DPP" (perlu konfirmasi pajak, tidak diterapkan).
   - INV-RAA/004 16.325.969 (tanpa nomor termin) → Kalawiran IMPLEMENTASI termin 1 (kandidat 1–3 dari PO yang sama → termin terkecil).
+
+## W. Nilai referensi per client & pemecahan PO EVANTAMA (penutup Fase 2)
+
+Dites di `packages/shared/src/calc/ppn.test.ts` dan `apps/api/test/phase23.e2e-spec.ts`.
+
+- **EVANTAMA = NET** (semua status):
+  - Permit RW 08: 4.500.000 + PPN 495.000 − PPh 2,65% 119.250 = **4.875.750**.
+  - Sinagar permit termin 2: 18.500.000 + 2.035.000 − 490.250 = **20.044.750**.
+  - Referensi bernilai tagihan (4.995.000) tidak cocok untuk client NET.
+- **CCSI/ADW = INVOICE_TOTAL**, mis. permit Kalawiran 10.212.800 dengan PPN 0.
+- **Setelah pemecahan PO** (Sinagar 85.025.796 + 23.914.881), termin 1 implementasi = 20%:
+  - CLUSTER: DPP 17.005.159,20 → net 18.425.090 (I2628-00142, Paid → Dibayar; PAJAK otomatis 450.636,71).
+  - SUBFEEDER: DPP 4.782.976,20 → net 5.182.355 (I2628-00160, Unpaid → Ditagih).
+  - Kersanagara RW 08: CLUSTER 5.819.864 dan SUBFEEDER 1.739.229 → cocok.
+- **Hasil DB Docker:** EVANTAMA 8/8 dan CCSI 4/4 referensi cocok dan diterapkan.

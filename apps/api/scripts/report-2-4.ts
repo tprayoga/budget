@@ -57,12 +57,18 @@ async function main() {
       extraPajak = extraPajak.plus(paymentDeduction(paymentTax(pay).invoiceTotal, r.netAmount.toString()));
     }
     const after = calcRealizedProfit(simPayments, dec(biaya).plus(extraPajak));
-    rekap.push(`| ${p.code} | ${f(proj.nilaiProyek)} | ${f(proj.profit)} | ${f(now.pembayaranBruto)} | ${f(now.realisasiBiaya)} | ${f(now.profitRealisasi)} | ${f(proj.marginPermit)} | ${f(now.ppnTitipan)} |`);
+    // piutang ditagih = termin INVOICED: tagihan (DPP + PPN) dan net yang diharapkan diterima
+    const invoiced = payments.filter((x) => x.status === 'INVOICED');
+    const piutang = invoiced.reduce((a, x) => a.plus(paymentTax(x).invoiceTotal), dec(0));
+    const piutangNet = invoiced.reduce((a, x) => a.plus(paymentTax(x).expectedNet), dec(0));
+    rekap.push(
+      `| ${p.code} | ${f(proj.nilaiProyek)} | ${f(proj.profit)} | ${f(now.pembayaranBruto)} | ${f(now.realisasiBiaya)} | ${f(now.profitRealisasi)} | ${f(proj.marginPermit)} | ${f(now.ppnTitipan)} | ${f(piutang)} (${invoiced.length} termin; net ${f(piutangNet)}) |`,
+    );
     sim.push(`| ${p.code} | ${ok.filter((r) => r.paid).length} | ${f(after.pembayaranBruto)} | ${f(extraPajak)} | ${f(after.realisasiBiaya)} | ${f(after.profitRealisasi)} | ${f(after.ppnTitipan)} | ${f(after.kasDiterima)} |`);
   }
 
   console.log(`\n=== Rekap sekarang (retensiAsCost=${g.retensiAsCost}, interest ${g.interestRate}, PPN ${g.ppnRate})`);
-  console.log('| Project | Nilai proyek | Profit proyeksi | DPP termin PAID | Realisasi biaya | Profit realisasi | Margin permit | PPN titipan |');
+  console.log('| Project | Nilai proyek | Profit proyeksi | DPP termin PAID | Realisasi biaya | Profit realisasi | Margin permit | PPN titipan | Piutang ditagih (DPP + PPN) |');
   for (const r of rekap) console.log(r);
   console.log('\n=== Simulasi: semua referensi yang cocok diterapkan (BELUM diterapkan — menunggu konfirmasi FINANCE)');
   console.log('| Project | Ref Paid diterapkan | DPP termin PAID | + PAJAK otomatis | Realisasi biaya | Profit realisasi | PPN titipan | Kas diterima |');

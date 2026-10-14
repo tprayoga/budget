@@ -2,18 +2,37 @@
 
 ## Penutupan Fase 2 — ringkasan (15 Oktober 2026)
 
-Fase 2 (realisasi biaya, termin klien, import RAB, buku kas) beserta 2.1–2.4 dan perbaikan pengajuan dana sudah selesai. Rincian ada di bagian-bagian di bawah dan di ACCEPTANCE G–U.
+Fase 2 (realisasi biaya, termin klien, import RAB, buku kas) beserta 2.1–2.4 dan perbaikan pengajuan dana sudah selesai. Rincian ada di bagian-bagian di bawah dan di ACCEPTANCE G–W.
 
 ### Status verifikasi akhir
 
 | Pemeriksaan | Hasil |
 |---|---|
-| Unit test shared | 140 lulus |
-| Test API (Jest + PostgreSQL) | 100 lulus |
+| Unit test shared | 142 lulus |
+| Test API (Jest + PostgreSQL) | 100 lulus (diperiksa juga dengan urutan file berbeda) |
 | Test web | 9 lulus |
 | Playwright e2e | 16 lulus |
 | `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
-| DB Docker | migrasi terakhir `20261015120000_termin_retensi`; item ditahan = 0; notifikasi over budget 4 (2 langsung + 2 ringkasan harian) |
+| DB Docker | migrasi terakhir `20261015150000_client_reference_value_type`; item ditahan 0; notifikasi over budget 4 (2 langsung + 2 ringkasan harian) |
+
+### Keputusan penutup (diterapkan)
+
+1. **PO implementasi EVANTAMA dipecah** (`scripts/split-evantama-po.ts --commit`): CLUSTER + SUBFEEDER per cluster, catatan "nilai dari sheet BOQ Plan — cocokkan dengan dokumen PO". Total per cluster tetap, profit proyeksi EVANTAMA tetap 7.640.924. Termin implementasi digenerate per PO (20/30/40/10).
+
+   | Cluster | PO CLUSTER | PO SUBFEEDER | Total |
+   |---|---|---|---|
+   | Sinagar | 754/FTTH/ENS/0826 = 85.025.796 | 978/FTTH/ENS/0926 = 23.914.881 | 108.940.677 |
+   | Kersanagara RW 08 | 976 = 26.856.780 | 977 = 8.025.978 | 34.882.758 |
+   | Kersanagara RW 04 | 979 = 27.902.437 | 980 = 13.728.951 | 41.631.388 |
+
+2. **Nilai referensi RAB per client** (`Client.referenceValueType`, diatur ADMIN di Data Master, diaudit).
+   - EVANTAMA = **NET** (DPP + PPN − PPh) untuk semua status (patch `2.6-nilai-referensi-per-client`). CCSI dan ADW = **INVOICE_TOTAL** (DPP + PPN; CCSI PPN 0).
+   - Status Paid/Unpaid hanya menentukan termin diterapkan sebagai Dibayar atau Ditagih. Mode "cocok di DPP" tetap ada (perlu konfirmasi pajak).
+3. **Pencocokan referensi akhir:**
+   - **EVANTAMA 8/8 cocok**: 4 permit (termasuk 3 Unpaid yang sudah diterapkan, kini cocok lagi) + 4 implementasi.
+   - Implementasi yang baru diterapkan: Sinagar cluster termin 1 **Dibayar** (tanggal diterima kosong + badge, PAJAK otomatis 450.636,71, PPN titipan 1.870.567,51); Sinagar subfeeder, Kersanagara RW 08 cluster & subfeeder termin 1 **Ditagih**.
+   - **CCSI 4/4 tetap cocok.**
+4. **Disetujui:** PPN 0 pada 4 termin CCSI yang belum dibayar, aturan "termin bernilai sama → termin terkecil", toleransi ± Rp 10 saat menerapkan.
 
 ### Yang dibangun di Fase 2
 
@@ -23,37 +42,30 @@ Fase 2 (realisasi biaya, termin klien, import RAB, buku kas) beserta 2.1–2.4 d
   - Buku kas + rekonsiliasi.
   - Penyesuaian PO (addwork/deduction).
   - Import budget dengan proteksi field yang diedit di aplikasi.
-- **PO per cluster** (implementasi/permit/SND/addwork/deduction, sub-jenis cluster/subfeeder). Nilai PO budget diturunkan dari PO; margin permit hanya dari PO PERMIT.
+- **PO per cluster** (implementasi CLUSTER/SUBFEEDER, permit, SND, addwork, deduction). Nilai PO budget diturunkan dari PO; margin permit hanya dari PO PERMIT.
 - **Termin klien.**
   - Termin per PO dari template client: ADW 80/10/10, Evantama 20/30/40/10 + permit 50/50, CCSI 30/30/30/10 dengan retensi 3 bulan dari opname.
   - Addwork/deduction mengoreksi termin 1.
-  - PPN titipan (DPP + PPN; PPN per client, mis. CCSI 0%) dan PAJAK otomatis = DPP + PPN − diterima.
-  - Pencocokan referensi RAB aturan C; mode "cocok di DPP" perlu konfirmasi.
-  - Tanggal tidak pernah ditebak (badge + inbox FINANCE + halaman "Pembayaran klien").
-- **Pengajuan dana** memperhitungkan realisasi di luar pengajuan dan batas cluster (over di satu pos mengurangi ruang cluster). Termin sebelum sistem bisa diset per cluster.
+  - PPN titipan (PPN per client) dan PAJAK otomatis = DPP + PPN − diterima.
+  - Pencocokan referensi RAB per client; tanggal tidak pernah ditebak (badge + inbox FINANCE + halaman "Pembayaran klien").
+- **Pengajuan dana** memperhitungkan realisasi di luar pengajuan dan batas cluster. Termin sebelum sistem bisa diset per cluster.
 - **Notifikasi over budget.** Total cluster dikirim langsung sekali per lintasan; pos masuk ringkasan harian.
-- **Setting.** Retensi = piutang (default resmi); PPN default 11%; ambang kuning & over.
+- **Setting.** Retensi = piutang (default resmi); PPN default 11% dengan override per client; ambang kuning & over.
 
-### Rekap akhir (DB Docker; retensi = piutang, interest 10%)
+### Rekap final (DB Docker; retensi = piutang, interest 10%)
 
-| Project | Nilai proyek | Profit proyeksi | DPP termin dibayar | Realisasi biaya | Profit realisasi | Margin permit | PPN titipan |
-|---|---|---|---|---|---|---|---|
-| ADW | 712.513.400 | 67.702.754 | 0 | 375.453.286 | −375.453.286 | 0 | 0 |
-| CCSI | 198.835.655 | 10.332.449 | 0 | 128.413.698 | −128.413.698 | −6.870.920 | 0 |
-| EVANTAMA | 236.454.823 | 7.640.924 | 18.500.000 | 141.665.869 | −123.165.869 | −6.451.500 | 2.035.000 |
+| Project | Nilai proyek | Profit proyeksi | DPP termin dibayar | Realisasi biaya | Profit realisasi | Margin permit | PPN titipan | Piutang ditagih (DPP + PPN) |
+|---|---|---|---|---|---|---|---|---|
+| ADW | 712.513.400 | 67.702.754 | 0 | 375.453.286 | −375.453.286 | 0 | 0 | 0 |
+| CCSI | 198.835.655 | 10.332.449 | 0 | 128.413.698 | −128.413.698 | −6.870.920 | 0 | 43.088.265 (4 termin; net diharapkan 42.011.058) |
+| EVANTAMA | 236.454.823 | 7.640.924 | 35.505.159 | 142.116.505 | −106.611.346 | −6.451.500 | 3.905.568 | 43.578.076 (6 termin; net diharapkan 42.537.698) |
 
-Profit realisasi masih negatif karena pembayaran klien asli belum diinput. Halaman "Pembayaran klien" berisi **53 termin** yang perlu dikejar.
+- Profit realisasi masih negatif karena sebagian besar pembayaran klien asli belum diinput.
+- Halaman "Pembayaran klien" berisi **57 termin** untuk dikejar: termin template yang sudah lewat 30 hari sejak implementasi dan belum ditagih, serta termin ditagih/dibayar tanpa tanggal.
 
 ### Keputusan terbuka
 
 1. **Redis** — ditunda ke fase deployment (rate limit login & pemindaian over budget masih in-process; cukup untuk 1 instance API).
-
-**Catatan (bukan keputusan desain, tetapi belum selesai di data):**
-
-- Pemecahan PO implementasi EVANTAMA (keputusan 2.4 c) **masih menunggu persetujuan commit**. Dry-run sudah ada (`scripts/split-evantama-po.ts`).
-- Dengan aturan C, **3 referensi EVANTAMA Unpaid yang sudah diterapkan tidak cocok lagi**: Kersanagara RW 08 permit termin 1 & 2, Sinagar permit termin 2. Nilai di RAB = net (DPP + PPN − PPh), bukan tagihan. Data yang sudah diterapkan tidak diubah.
-- Untuk 3 referensi implementasi EVANTAMA yang Unpaid, aturan C juga tidak akan cocok setelah PO dipecah karena nilainya = net. Yang Paid (I2628-00142) tetap cocok.
-- Kesimpulan: sheet EVANTAMA tampaknya mencatat nilai net juga untuk invoice Unpaid. Perlu dipastikan apakah aturan C untuk EVANTAMA memakai net.
 
 ## Keputusan CCSI & aturan pencocokan C (15 Oktober 2026)
 
