@@ -23,7 +23,10 @@ function LineRow({ l, i }: { l: FrLine; i: number }) {
       <td className="td num"><Money value={l.budgetAmount} plain /></td>
       <td className="td num"><Pct value={l.pctCair} decimals={0} /></td>
       <td className="td num font-semibold"><Money value={l.diajukan} plain /></td>
-      <td className="td num hidden sm:table-cell"><Money value={l.sudahDicairkanSebelum} plain /></td>
+      <td className="td num hidden sm:table-cell">
+        <Money value={l.sudahTerpakai ?? l.sudahDicairkanSebelum} plain />
+        {Number(l.realisasiTanpaPengajuan) > 0 && <sup className="text-slate-400">*</sup>}
+      </td>
       <td className="td num hidden sm:table-cell"><Money value={l.sisaBudget} plain /></td>
       <td className="td hidden whitespace-normal text-xs text-slate-500 xl:table-cell">{l.keterangan}</td>
     </tr>
@@ -39,7 +42,7 @@ function TotalRow({ label, t, strong }: { label: string; t: FrTotals; strong?: b
       <td className="td num"><Money value={t.budgetAmount} plain /></td>
       <td className="td" />
       <td className="td num"><Money value={t.diajukan} plain /></td>
-      <td className="td num hidden sm:table-cell"><Money value={t.sudahDicairkanSebelum} plain /></td>
+      <td className="td num hidden sm:table-cell"><Money value={t.sudahTerpakai ?? t.sudahDicairkanSebelum} plain /></td>
       <td className="td num hidden sm:table-cell"><Money value={t.sisaBudget} plain /></td>
       <td className="td hidden xl:table-cell" />
     </tr>
@@ -88,7 +91,7 @@ export function FrSheet({ fr }: { fr: FrDetail }) {
             <tr>
               <th className="th">No</th><th className="th">Pos anggaran</th><th className="th num hidden lg:table-cell">% Nilai proyek</th>
               <th className="th num">Budget</th><th className="th num">% Cair</th><th className="th num">Diajukan</th>
-              <th className="th num hidden sm:table-cell">Sudah cair sblm</th><th className="th num hidden sm:table-cell">Sisa budget</th>
+              <th className="th num hidden sm:table-cell">Sudah terpakai/dicairkan</th><th className="th num hidden sm:table-cell">Sisa budget</th>
               <th className="th hidden xl:table-cell">Keterangan</th>
             </tr>
           </thead>
@@ -102,6 +105,11 @@ export function FrSheet({ fr }: { fr: FrDetail }) {
             <TotalRow label="TOTAL PENGAJUAN" t={fr.total} strong />
           </tbody>
         </table>
+        {Number(fr.total.realisasiTanpaPengajuan) > 0 && (
+          <p className="border-t px-4 py-2 text-xs text-slate-600" data-testid="catatan-realisasi">
+            * Sudah terpakai/dicairkan termasuk realisasi sebelum sistem / di luar pengajuan (<Money value={fr.total.realisasiTanpaPengajuan} />).
+          </p>
+        )}
         {anySedang && (
           <p className="border-t bg-amber-50 px-4 py-2 text-xs text-amber-800">
             Ada pengajuan lain untuk cluster ini yang sedang diproses: <b><Money value={fr.total.sedangDiproses} /></b>. Nilai ini ikut dihitung saat validasi sisa budget.

@@ -125,6 +125,7 @@ export function ClusterPage() {
   const nav = useNavigate();
   const { can } = useAuth();
   const editable = can('ADMIN', 'PM');
+  const [offset, setOffset] = useState<string>('');
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['cluster', id], queryFn: () => api<ClusterDetail>(`/clusters/${id}`) });
   const form = useForm<FormValues>({ resolver: zodResolver(formSchema) });
@@ -159,6 +160,13 @@ export function ClusterPage() {
       });
     },
     onSuccess: invalidate,
+  });
+  const setTermin = useMutation({
+    mutationFn: (n: number) => api(`/clusters/${id}`, { method: 'PATCH', json: { terminOffset: n } }),
+    onSuccess: async () => {
+      setOffset('');
+      await invalidate();
+    },
   });
   const dup = useMutation({
     mutationFn: () => api<{ id: string }>(`/clusters/${id}/duplicate`, { method: 'POST', json: { name: dupName } }),
@@ -323,6 +331,21 @@ export function ClusterPage() {
         </form>
 
         <div className="min-w-0 space-y-4">
+          {can('ADMIN') && (
+            <section className="card flex flex-wrap items-end gap-2 p-4" aria-label="Termin sebelum sistem">
+              <Field label="Termin pencairan sebelum sistem" hint={`Termin pengajuan berikutnya: ke-${c.nextTerminKe}`}>
+                <input className="input w-24" inputMode="numeric" value={offset || String(c.terminOffset ?? 0)} onChange={(e) => setOffset(e.target.value)} aria-label="Jumlah termin sebelum sistem" />
+              </Field>
+              <button
+                className="btn-secondary mb-0.5"
+                disabled={setTermin.isPending || !/^\d+$/.test(offset) || Number(offset) === (c.terminOffset ?? 0)}
+                onClick={() => setTermin.mutate(Number(offset))}
+              >
+                Simpan
+              </button>
+              <ErrorBox error={setTermin.error ? errorMessage(setTermin.error) : null} />
+            </section>
+          )}
           <section className="card p-4">
             <h2 className="mb-3 font-semibold">Ringkasan</h2>
             <Waterfall nilaiProyek={live.nilaiProyek} danaInvestor={live.danaInvestor} interest={live.interest} profit={live.profit} />
@@ -347,12 +370,13 @@ export function ClusterPage() {
           <section className="card overflow-hidden">
             <h2 className="border-b px-4 py-3 font-semibold">Sisa budget per pos</h2>
             <table className="w-full text-sm">
-              <thead className="bg-slate-50"><tr><th className="th">Pos</th><th className="th num">Cair</th><th className="th num">Proses</th><th className="th num">Sisa</th></tr></thead>
+              <thead className="bg-slate-50"><tr><th className="th">Pos</th><th className="th num">Cair</th><th className="th num" title="Realisasi terverifikasi di luar pengajuan">Real. lain</th><th className="th num">Proses</th><th className="th num">Sisa</th></tr></thead>
               <tbody>
-                {c.usage.filter((u) => Number(u.budget) !== 0 || Number(u.sudahDicairkan) !== 0).map((u) => (
+                {c.usage.filter((u) => Number(u.budget) !== 0 || Number(u.sudahDicairkan) !== 0 || Number(u.realisasiTanpaPengajuan ?? 0) !== 0).map((u) => (
                   <tr key={u.code} className="border-t">
                     <td className="td whitespace-normal">{u.label}<div className="text-[11px] text-slate-400">Budget {formatAngka(u.budget)}</div></td>
                     <td className="td num"><Money value={u.sudahDicairkan} plain /></td>
+                    <td className="td num text-slate-500"><Money value={u.realisasiTanpaPengajuan ?? '0'} plain /></td>
                     <td className="td num text-amber-700"><Money value={u.sedangDiproses} plain /></td>
                     <td className="td num font-semibold"><Money value={u.sisa} plain /></td>
                   </tr>

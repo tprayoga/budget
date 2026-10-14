@@ -173,7 +173,7 @@ export interface FrTotals {
   sedangDiproses: D;
   realisasiTanpaPengajuan: D;
   sudahTerpakai: D;
-  /** Σ max(sisaTersedia, 0) — total yang masih bisa diajukan. */
+  /** Σ max(sisaTersedia, 0) dibulatkan ke bawah per pos ke rupiah — total yang masih bisa diajukan. */
   sisaTersedia: D;
   sisaBudget: D;
 }
@@ -197,7 +197,7 @@ function totals(lines: FrLineResult[]): FrTotals {
     sedangDiproses: sum(lines.map((l) => l.sedangDiproses)),
     realisasiTanpaPengajuan: sum(lines.map((l) => l.realisasiTanpaPengajuan)),
     sudahTerpakai: sum(lines.map((l) => l.sudahTerpakai)),
-    sisaTersedia: sum(lines.map((l) => (l.habis ? new D(0) : l.sisaTersedia))),
+    sisaTersedia: sum(lines.map((l) => (l.habis ? new D(0) : l.sisaTersedia.toDecimalPlaces(0, D.ROUND_DOWN)))),
     sisaBudget: sum(lines.map((l) => l.sisaBudget)),
   };
 }

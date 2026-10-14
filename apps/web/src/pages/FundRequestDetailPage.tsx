@@ -217,6 +217,9 @@ export function FundRequestDetailPage() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-4">
           {fr.status === 'DICAIRKAN' && <UsagePanel id={fr.id} />}
+          {fr.recalcNote && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status" data-testid="recalc-banner">{fr.recalcNote}.</div>
+          )}
           <FrSheet fr={fr} />
         </div>
         <div className="order-first min-w-0 space-y-4 lg:order-none lg:sticky lg:top-6 lg:self-start">

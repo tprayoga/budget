@@ -317,3 +317,36 @@ TEPAS RW 05 subfeeder 8.581.840 → 8.368.540; Gunungtawang subfeeder 13.265.280
 - Over budget: TOTAL cluster ≥ ambang → notifikasi langsung PM & DIREKTUR, sekali per lintasan (status OverrunState;
   turun lalu naik lagi = lintasan baru). Pos > ambang → "Ringkasan harian" (1 notifikasi per user per hari,
   pos baru ditambahkan, pos yang sama tidak diulang).
+
+## T. Pengajuan dana memperhitungkan realisasi di luar pengajuan (perbaikan 14 Okt 2026)
+
+Dites di `packages/shared/src/calc/fundRequest-realisasi.test.ts`, `apps/api/test/{realization,fund-request}.e2e-spec.ts`,
+`e2e/phase2.spec.ts`.
+
+- `realisasiTanpaPengajuan` per cluster per pos = Σ alokasi expense TERVERIFIKASI ke cluster & pos itu dengan `fundRequestId = null`.
+- `sisaTersedia = ROUND(budget) − sudahDicairkan − sedangDiproses − realisasiTanpaPengajuan`.
+- `sisaSetelahPengajuan = sisaTersedia − diajukan`. Validasi submit/approve: ≥ 0 untuk pos yang diajukan; pos yang sudah over tetapi diajukan 0 tidak menggagalkan. Override ADMIN tetap berlaku.
+- % cair default = sisaTersedia / budget, dibulatkan ke bawah 0,01%. Pos dengan sisa < Rp 1 → % 0, input nonaktif, badge "Habis"; sisa ≤ −Rp 1 → badge "Over Rp x".
+- Aturan pelunasan: diajukan = sisa (dibulatkan ke bawah ke rupiah) bila selisihnya ≤ 0,01% × budget.
+- Expense yang ditautkan ke pengajuan DICAIRKAN keluar dari realisasiTanpaPengajuan, karena sudah terhitung di sudahDicairkan. Dites: realisasi −1.000.000, sisa +1.000.000, sudahDicairkan tetap.
+- terminKe = jumlah DICAIRKAN + terminOffset + 1 (offset hanya ADMIN). Dites: offset 2 → termin ke-3.
+
+| Acuan | Nilai |
+|---|---|
+| Karondoran — Biaya Permit | budget 11.964.553,71 (ROUND 11.964.554), realisasi permit (alokasi 22.000.000) 11.964.553,71 → sisa 0,29 = **Habis**, input nonaktif, diajukan 0 |
+| Karondoran — Marketing | budget 571.689,48, realisasi 1.647.534 (porsi fee marketing 4 jt + biaya marketing) → **Over Rp 1.075.845**, diajukan 0 |
+| Unit | budget 1.000.000, realisasi 333.333 → % default 66,66% → diajukan 666.667 (= sisa, pelunasan) |
+| Draft lama | dibuka → dihitung ulang, `recalcNote` "Angka diperbarui karena realisasi sebelumnya …", % pos yang melebihi sisa diturunkan; dihapus saat submit |
+
+Rekap DB Docker (default % = sisa):
+
+| Cluster | Budget total | Realisasi tanpa pengajuan | Sisa yang bisa diajukan |
+|---|---|---|---|
+| Kalawiran Kakas Barat (Manado) | 57.712.947 | 44.208.306 | 17.316.362 |
+| Karondoran Langowan Timur (Manado) | 45.404.206 | 37.947.460 | 12.099.279 |
+| Padangsari RW 12 & 13 (Semarang) | 68.249.398 | 46.257.932 | 22.191.466 |
+| Cluster Sinagar Tasik | 128.468.016 | 99.990.593 | 40.073.610 |
+| Cluster Kersanagara RW 08 Tasik | 39.878.109 | 25.112.843 | 14.765.265 |
+| Cluster Kersanagara RW 04 Tasik | 39.666.511 | 16.072.182 | 23.594.329 |
+
+Sisa yang bisa diajukan bisa lebih besar dari budget − realisasi. Ini terjadi karena pos yang over tidak mengurangi sisa pos lain; dana tidak dipindah antar pos.

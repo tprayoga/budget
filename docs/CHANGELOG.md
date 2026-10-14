@@ -1,5 +1,70 @@
 # Changelog
 
+## Perbaikan — Wizard Pengajuan Dana memperhitungkan realisasi yang sudah ada (14 Oktober 2026)
+
+### Masalah
+
+Sisa budget di pengajuan hanya dikurangi pengajuan sebelumnya. Realisasi terverifikasi yang tidak lewat pengajuan (mis. hasil import RAB) diabaikan. Contohnya Karondoran: semua pos tampil "Sudah cair = 0" dan default diajukan 100% budget (45.404.206), sehingga investor diminta mendanai biaya yang sudah dibayar.
+
+### Status verifikasi
+
+| Pemeriksaan | Hasil |
+|---|---|
+| Unit test shared | 132 lulus (baru: acuan T) |
+| Test API | 95 lulus (baru: Karondoran, draft lama, terminOffset, tautan expense ke pengajuan) |
+| Test web | 9 lulus |
+| Playwright e2e | 16 lulus (baru: wizard Karondoran) |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | bersih |
+| DB Docker | migrasi `20261014200000_fr_realisasi_tanpa_pengajuan` terpasang |
+
+### Perubahan
+
+1. **`realisasiTanpaPengajuan`** per cluster per pos = Σ alokasi expense TERVERIFIKASI tanpa `fundRequestId`.
+2. **Rumus sisa** (`shared/calc/fundRequest.ts`):
+   - `sisaTersedia = ROUND(budget) − sudahDicairkan − sedangDiproses − realisasiTanpaPengajuan`.
+   - `sisaSetelahPengajuan = sisaTersedia − diajukan`.
+   - Validasi submit & approve ≥ 0. Override ADMIN tetap.
+   - Pos yang sudah over tetapi tidak diajukan (diajukan 0) tidak memblokir pengajuan; tanpa ini setiap cluster yang punya satu pos over tidak bisa mengajukan sama sekali.
+3. **Wizard langkah 2**
+   - Kolom **Realisasi di luar pengajuan**, ditautkan ke daftar realisasi yang sudah difilter cluster + pos + tanpa pengajuan.
+   - % default = sisa/budget (dibulatkan ke bawah 0,01%); diajukan memakai aturan pelunasan bila mencapai sisa.
+   - Pos habis: input nonaktif, badge **Habis** / **Over Rp x**.
+   - Tombol **Sisa budget / 50% dari sisa / 0%**.
+   - Ringkasan **Budget total / Sudah terealisasi / Sisa yang bisa diajukan**.
+4. **Form & PDF pengajuan**
+   - Kolom **Sudah Terpakai/Dicairkan** = sudahDicairkan + realisasiTanpaPengajuan.
+   - Catatan kaki "termasuk realisasi sebelum sistem (Rp x)".
+   - Nilai dibekukan di snapshot saat submit (`FundRequestLine.realisasiTanpaPengajuan`).
+5. **Expense yang ditautkan ke pengajuan DICAIRKAN** otomatis keluar dari realisasi tanpa pengajuan (dites).
+6. **`Cluster.terminOffset`**
+   - Termin sebelum sistem, hanya ADMIN (403 untuk role lain), dengan field di detail cluster.
+   - terminKe = DICAIRKAN + offset + 1.
+7. **Draft yang sudah ada** dihitung ulang saat dibuka bila realisasinya berubah.
+   - % pos yang melebihi sisa diturunkan (pos habis → 0).
+   - Muncul banner "Angka diperbarui karena realisasi sebelumnya (Rp x di luar pengajuan)" di wizard & detail.
+   - Perubahan diaudit dengan pelaku sistem. Banner hilang saat submit.
+8. Kartu "Sisa budget per pos" di detail cluster ikut mengurangi realisasi di luar pengajuan (kolom "Real. lain").
+9. Script read-only `scripts/report-sisa-pengajuan.ts`.
+
+### Laporan (DB Docker)
+
+| Cluster | Budget total | Realisasi tanpa pengajuan | Sisa yang bisa diajukan | Pos habis / over |
+|---|---|---|---|---|
+| CCSI Kalawiran | 57.712.947 | 44.208.306 | 17.316.362 | Permit habis; Tiket over 1.509.642, OPS over 311.204, Motor over 454.709, Marketing over 1.536.168 |
+| CCSI Karondoran | 45.404.206 | 37.947.460 | **12.099.279** (sebelumnya default 45.404.206) | Permit & Allowance habis; Tiket over 1.597.758, OPS over 963.495, Motor over 895.291, HB over 110.145, Marketing over 1.075.845 |
+| CCSI Padangsari (Semarang) | 68.249.398 | 46.257.932 | 22.191.466 | Permit habis; Allowance over 200.000 |
+| EVANTAMA Sinagar | 128.468.016 | 99.990.593 | 40.073.610 | Permit & OPS habis; Allowance over 11.596.186 |
+| EVANTAMA Kersanagara RW 08 | 39.878.109 | 25.112.843 | 14.765.265 | Permit & OPS habis |
+| EVANTAMA Kersanagara RW 04 | 39.666.511 | 16.072.182 | 23.594.329 | Permit & OPS habis |
+
+### Yang perlu direview
+
+1. **DRAFT-HO2ZQ4 tidak ada di DB Docker** (tidak ada draft terbuka). Bila ada di lingkungan lain, draft itu otomatis dihitung ulang saat dibuka.
+2. **Pos over tidak menutup sisa pos lain.** Contoh Kalawiran: sisa total 17,3 jt lebih besar dari budget − realisasi (13,5 jt), karena pos yang over dianggap 0 dan tidak mengurangi pos lain. Kalau seharusnya over di satu pos memotong pos lain (realokasi), perlu aturan baru.
+3. **Pos dengan sisa receh (< Rp 1) dianggap habis.** Ini muncul dari pembulatan alokasi, mis. Permit Karondoran sisa Rp 0,29.
+4. **Pelaku audit hitung ulang draft = sistem.** Perubahan terjadi saat draft dibuka (GET), bukan oleh aksi user.
+5. **Dua perubahan data Fase 2.4 masih menunggu persetujuan:** generate ulang termin ADW dan penerapan 4 referensi EVANTAMA yang cocok.
+
 ## Fase 2.4 — PPN termin klien, koreksi termin 1, notifikasi per lintasan, margin permit PERMIT (14 Oktober 2026)
 
 ### Status verifikasi

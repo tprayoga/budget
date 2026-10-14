@@ -92,7 +92,7 @@ test('Alur pengajuan: wizard → ajukan → approve 3 tahap → cair → PDF', a
   await page.getByRole('option', { name: /WANASARI RW 01 SUBANG/ }).click();
   await page.getByRole('button', { name: /Buat draft/ }).click();
 
-  // Langkah 2 — % cair 100% → total 7.708.170
+  // Langkah 2 — default % cair = sisa budget (belum ada realisasi → 100%) → total 7.708.170
   await expect(page.getByRole('row', { name: /^TOTAL/ })).toContainText('7.708.170');
   await page.screenshot({ path: path.join(SHOTS, 'wizard-pct-cair.png') });
   await page.getByRole('button', { name: 'Lanjut' }).click();
@@ -154,7 +154,7 @@ test.describe('HP (direktur approve dari ponsel)', () => {
     await page.getByPlaceholder('Cari cluster…').fill('Gempol');
     await page.getByRole('option', { name: /Gempol Cirebon/ }).click();
     await page.getByRole('button', { name: /Buat draft/ }).click();
-    await page.getByRole('button', { name: '50%' }).click();
+    await page.getByRole('button', { name: '50% dari sisa' }).click();
     await expect(page.getByText('Tersimpan otomatis')).toBeVisible();
     await page.getByRole('button', { name: 'Lanjut' }).click();
     await page.getByRole('button', { name: 'Lanjut' }).click();

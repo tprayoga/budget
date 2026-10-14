@@ -8,7 +8,7 @@ import type { Cluster, FrDetail, Project } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { FrSheet, attachmentLabel } from '../components/FrSheet';
 import { ErrorBox, Field, Money, PageHeader, Spinner, Toggle, cx } from '../components/ui';
-import { pctInputToRatio, ratioToPctInput } from '../lib/format';
+import { formatAngka, pctInputToRatio, ratioToPctInput } from '../lib/format';
 
 const STEPS = ['Cluster', '% Cair per pos', 'Lampiran', 'Review'];
 
@@ -154,6 +154,11 @@ function EditDraft({ id }: { id: string }) {
         actions={<Link to={`/pengajuan/${id}`} className="btn-ghost">Tutup</Link>}
       />
       <Stepper step={step} onGo={go} canGo />
+      {fr.recalcNote && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status" data-testid="recalc-banner">
+          {fr.recalcNote}. % cair pos yang melebihi sisa sudah diturunkan — periksa langkah 2.
+        </div>
+      )}
       {step === 1 && <StepHeader fr={fr} patch={patch} onNext={() => go(2)} />}
       {step === 2 && <StepLines fr={fr} patch={patch} onBack={() => go(1)} onNext={() => go(3)} />}
       {step === 3 && <StepAttachments fr={fr} onBack={() => go(2)} onNext={() => go(4)} />}
@@ -190,8 +195,16 @@ function StepHeader({ fr, patch, onNext }: { fr: FrDetail; patch: PatchMutation;
   );
 }
 
+/** Badge pos tanpa sisa: "Habis", atau "Over Rp x" (merah) bila realisasi/pencairan melebihi budget. */
+function SisaBadge({ sisa }: { sisa: string }) {
+  const n = Number(sisa);
+  // selisih sen akibat alokasi (> −Rp 1) dianggap habis, bukan over
+  if (n <= -1) return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700" data-testid="badge-over">Over Rp {formatAngka(String(-n))}</span>;
+  return <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600" data-testid="badge-habis">Habis</span>;
+}
+
 function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMutation; onBack: () => void; onNext: () => void }) {
-  const initial = useMemo(() => Object.fromEntries(fr.lines.map((l) => [l.budgetCode, ratioToPctInput(l.pctCair)])), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => Object.fromEntries(fr.lines.map((l) => [l.budgetCode, l.habis ? '0' : ratioToPctInput(l.pctCair)])), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [pcts, setPcts] = useState<Record<string, string>>(initial);
   const [kets, setKets] = useState<Record<string, string>>(() => Object.fromEntries(fr.lines.map((l) => [l.budgetCode, l.keterangan ?? ''])));
   const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -201,7 +214,7 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
   });
 
   const payload = (p = pcts, k = kets) => ({
-    lines: fr.lines.map((l) => ({ budgetCode: l.budgetCode, pctCair: pctInputToRatio(p[l.budgetCode]) ?? '0', keterangan: k[l.budgetCode] || null })),
+    lines: fr.lines.map((l) => ({ budgetCode: l.budgetCode, pctCair: l.habis ? '0' : (pctInputToRatio(p[l.budgetCode]) ?? '0'), keterangan: k[l.budgetCode] || null })),
   });
   const schedule = (p: Record<string, string>, k: Record<string, string>) => {
     clearTimeout(timer.current);
@@ -213,19 +226,38 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
   };
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const setAll = (v: string) => {
-    const p = Object.fromEntries(fr.lines.map((l) => [l.budgetCode, v]));
+  /** Tombol cepat: "Sisa budget" (= % sisa), "50% dari sisa", "0%". Pos habis selalu 0. */
+  const setAll = (mode: 'sisa' | 'half' | 'zero') => {
+    const p = Object.fromEntries(
+      fr.lines.map((l) => {
+        if (l.habis || mode === 'zero') return [l.budgetCode, '0'];
+        const ratio = mode === 'sisa' ? Number(l.pctSisa) : Math.floor((Number(l.pctSisa) / 2) * 10000) / 10000;
+        return [l.budgetCode, ratioToPctInput(String(ratio))];
+      }),
+    );
     setPcts(p);
     schedule(p, kets);
   };
   const line = (code: FrCode) => fr.lines.find((l) => l.budgetCode === code)!;
+  const realLink = (code: FrCode) => `/realisasi?clusterId=${fr.cluster.id}&budgetCode=${code}&tanpaPengajuan=true`;
 
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" data-testid="ringkasan-sisa">
+        <div className="card p-3"><div className="text-xs text-slate-500">Budget total</div><div className="text-lg font-semibold"><Money value={fr.total.budgetAmount} /></div></div>
+        <div className="card p-3">
+          <div className="text-xs text-slate-500">Sudah terealisasi (dicairkan + di luar pengajuan)</div>
+          <div className="text-lg font-semibold"><Money value={fr.total.sudahTerpakai} /></div>
+          {Number(fr.total.realisasiTanpaPengajuan) > 0 && <div className="text-[11px] text-slate-500">termasuk realisasi di luar pengajuan <Money value={fr.total.realisasiTanpaPengajuan} /></div>}
+        </div>
+        <div className="card p-3"><div className="text-xs text-slate-500">Sisa yang bisa diajukan</div><div className="text-lg font-semibold text-brand"><Money value={fr.total.sisaTersedia} /></div></div>
+      </div>
       <div className="card p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
           <span className="text-slate-600">Atur semua pos:</span>
-          {['100', '50', '0'].map((v) => <button key={v} className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll(v)}>{v}%</button>)}
+          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('sisa')}>Sisa budget</button>
+          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('half')}>50% dari sisa</button>
+          <button className="btn-secondary px-2 py-1 text-xs" onClick={() => setAll('zero')}>0%</button>
           <span className={cx('ml-auto text-xs', patch.isPending ? 'text-amber-600' : 'text-slate-400')}>{patch.isPending ? 'Menghitung…' : 'Tersimpan otomatis'}</span>
         </div>
         <div className="overflow-x-auto">
@@ -233,6 +265,7 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
             <thead className="bg-slate-50">
               <tr>
                 <th className="th">Pos</th><th className="th num">Budget</th><th className="th num hidden sm:table-cell">Sudah cair</th>
+                <th className="th num hidden sm:table-cell" title="Realisasi terverifikasi yang tidak ditautkan ke pengajuan (mis. sebelum sistem)">Realisasi di luar pengajuan</th>
                 <th className="th num hidden sm:table-cell">Sedang diproses</th><th className="th w-24">% Cair</th><th className="th num">Diajukan</th>
                 <th className="th num hidden md:table-cell">Sisa</th><th className="th hidden lg:table-cell">Keterangan</th>
               </tr>
@@ -242,18 +275,29 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
                 const s = line(l.budgetCode);
                 const bad = invalid.some(([c]) => c === l.budgetCode);
                 return (
-                  <tr key={l.budgetCode} className={cx('border-t', s.overBudget && 'bg-red-50')}>
+                  <tr key={l.budgetCode} className={cx('border-t', s.overBudget && 'bg-red-50', s.habis && 'bg-slate-50 text-slate-500')} data-testid={`fr-line-${l.budgetCode}`}>
                     <td className="td whitespace-normal">
                       <span className="mr-1 text-[10px] font-bold text-slate-400">{l.section}</span>{l.label}
+                      {s.habis && <div className="mt-0.5"><SisaBadge sisa={s.sisaTersedia} /></div>}
                     </td>
                     <td className="td num"><Money value={s.budgetAmount} plain /></td>
                     <td className="td num hidden sm:table-cell"><Money value={s.sudahDicairkanSebelum} plain /></td>
+                    <td className="td num hidden sm:table-cell">
+                      {Number(s.realisasiTanpaPengajuan) ? (
+                        <Link className="text-brand hover:underline" to={realLink(l.budgetCode)} title="Lihat daftar realisasi">
+                          <Money value={s.realisasiTanpaPengajuan} plain />
+                        </Link>
+                      ) : (
+                        <span className="text-slate-400">0</span>
+                      )}
+                    </td>
                     <td className="td num hidden text-amber-700 sm:table-cell"><Money value={s.sedangDiproses} plain /></td>
                     <td className="td">
                       <input
-                        className={cx('input w-20 py-1 text-right', bad && 'border-red-500')}
+                        className={cx('input w-20 py-1 text-right', bad && 'border-red-500', s.habis && 'bg-slate-100')}
                         inputMode="decimal"
-                        value={pcts[l.budgetCode]}
+                        value={s.habis ? '0' : pcts[l.budgetCode]}
+                        disabled={s.habis}
                         aria-label={`% cair ${l.label}`}
                         onChange={(e) => {
                           const p = { ...pcts, [l.budgetCode]: e.target.value };
@@ -263,7 +307,7 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
                       />
                     </td>
                     <td className="td num font-semibold"><Money value={s.diajukan} plain /></td>
-                    <td className={cx('td num hidden md:table-cell', s.overBudget && 'font-bold text-red-600')}><Money value={s.sisaSetelahProses} plain /></td>
+                    <td className={cx('td num hidden md:table-cell', (s.overBudget || Number(s.sisaSetelahProses) < 0) && 'font-bold text-red-600')}><Money value={s.sisaSetelahProses} plain /></td>
                     <td className="td hidden lg:table-cell">
                       <input
                         className="input py-1 text-xs"
@@ -283,6 +327,7 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
                 <td className="td">TOTAL</td>
                 <td className="td num"><Money value={fr.total.budgetAmount} plain /></td>
                 <td className="td num hidden sm:table-cell"><Money value={fr.total.sudahDicairkanSebelum} plain /></td>
+                <td className="td num hidden sm:table-cell"><Money value={fr.total.realisasiTanpaPengajuan} plain /></td>
                 <td className="td num hidden sm:table-cell"><Money value={fr.total.sedangDiproses} plain /></td>
                 <td className="td" />
                 <td className="td num"><Money value={fr.total.diajukan} plain /></td>
@@ -292,7 +337,7 @@ function StepLines({ fr, patch, onBack, onNext }: { fr: FrDetail; patch: PatchMu
           </table>
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Sisa = budget − sudah dicairkan − sedang diproses (pengajuan lain yang belum cair) − diajukan. {fr.terbilang}.
+          Sisa = budget − sudah dicairkan − realisasi di luar pengajuan − sedang diproses (pengajuan lain yang belum cair) − diajukan. {fr.terbilang}.
         </p>
         {invalid.length > 0 && <p className="mt-1 text-xs text-red-600">% cair harus angka 0–100.</p>}
         {fr.overBudgetCodes.length > 0 && <p className="mt-1 text-xs text-red-600">Ada pos yang melebihi sisa budget — kurangi % cair.</p>}

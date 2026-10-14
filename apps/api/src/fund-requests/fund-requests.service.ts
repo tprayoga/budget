@@ -416,7 +416,7 @@ export class FundRequestsService {
       sedangDiproses: sum(ls.map((l) => l.sedangDiproses)),
       realisasiTanpaPengajuan: sum(ls.map((l) => l.realisasiTanpaPengajuan)),
       sudahTerpakai: sum(ls.map((l) => l.sudahTerpakai)),
-      sisaTersedia: sum(ls.map((l) => (l.habis ? dec(0) : l.sisaTersedia))),
+      sisaTersedia: sum(ls.map((l) => (l.habis ? dec(0) : l.sisaTersedia.toDecimalPlaces(0, 1)))),
       sisaBudget: sum(ls.map((l) => l.sisaBudget)),
     });
     return {

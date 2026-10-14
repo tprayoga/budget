@@ -81,6 +81,7 @@ export interface Cluster {
   /** Σ PO PERMIT saja (dasar margin permit, tanpa SND) */
   permitPoAmount?: string;
   note?: string | null;
+  terminOffset?: number;
   pajakRate: string;
   retensiRate: string;
   implementationDate?: string | null;
@@ -144,6 +145,7 @@ export interface UsageRow {
   budget: string;
   sudahDicairkan: string;
   sedangDiproses: string;
+  realisasiTanpaPengajuan?: string;
   sisa: string;
 }
 
@@ -191,6 +193,15 @@ export interface FrLine {
   diajukan: string;
   sudahDicairkanSebelum: string;
   sedangDiproses: string;
+  /** Realisasi terverifikasi pos ini yang tidak ditautkan ke pengajuan (mis. sebelum sistem). */
+  realisasiTanpaPengajuan: string;
+  /** sudahDicairkanSebelum + realisasiTanpaPengajuan */
+  sudahTerpakai: string;
+  /** ROUND(budget) − sudah cair − sedang diproses − realisasi tanpa pengajuan */
+  sisaTersedia: string;
+  /** % cair "sisa budget" (rasio, dibulatkan ke bawah 0,01%) */
+  pctSisa: string;
+  habis: boolean;
   sisaBudget: string;
   sisaSetelahProses: string;
   penyesuaianPembulatan: boolean;
@@ -204,6 +215,9 @@ export interface FrTotals {
   diajukan: string;
   sudahDicairkanSebelum: string;
   sedangDiproses: string;
+  realisasiTanpaPengajuan: string;
+  sudahTerpakai: string;
+  sisaTersedia: string;
   sisaBudget: string;
 }
 
@@ -227,6 +241,8 @@ export interface FrAttachment {
 
 export interface FrDetail {
   id: string;
+  /** Draft dihitung ulang otomatis (mis. karena realisasi sebelumnya) — tampil sebagai banner. */
+  recalcNote: string | null;
   number: string | null;
   label: string;
   status: FrStatus;

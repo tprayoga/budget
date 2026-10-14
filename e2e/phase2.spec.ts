@@ -188,3 +188,32 @@ test('Notifikasi: lonceng tersedia untuk PM', async ({ page }) => {
   await page.getByRole('button', { name: /^Notifikasi/ }).first().click();
   await expect(page.getByRole('dialog', { name: 'Daftar notifikasi' })).toBeVisible();
 });
+
+test('Wizard pengajuan memperhitungkan realisasi di luar pengajuan (Karondoran)', async ({ page }) => {
+  await login(page, 'pm');
+  await page.goto('/pengajuan/baru');
+  await page.getByPlaceholder('Cari cluster…').fill('Karondoran');
+  await page.getByRole('option', { name: /Karondoran Langowan Timur/ }).click();
+  await page.getByRole('button', { name: /Buat draft/ }).click();
+  const ringkasan = page.getByTestId('ringkasan-sisa');
+  await expect(ringkasan).toContainText('Budget total');
+  await expect(ringkasan).toContainText('Sisa yang bisa diajukan');
+  const permit = page.getByTestId('fr-line-PERMIT');
+  await expect(permit.getByTestId('badge-habis')).toBeVisible();
+  await expect(permit.getByLabel(/% cair/)).toBeDisabled();
+  await expect(permit).toContainText('11.964.554');
+  const mkt = page.getByTestId('fr-line-MARKETING');
+  await expect(mkt.getByTestId('badge-over')).toContainText('Over Rp');
+  await expect(mkt.getByLabel(/% cair/)).toHaveValue('0');
+  await expect(page.getByText('Ada pos yang melebihi sisa budget')).toHaveCount(0);
+  await page.screenshot({ path: path.join(SHOTS, 'wizard-realisasi.png'), fullPage: true });
+  await page.getByRole('button', { name: '0%', exact: true }).click();
+  await expect(page.getByText('Tersimpan otomatis')).toBeVisible();
+  await page.getByRole('button', { name: 'Sisa budget', exact: true }).click();
+  await expect(page.getByText('Tersimpan otomatis')).toBeVisible();
+  await expect(page.getByText('Ada pos yang melebihi sisa budget')).toHaveCount(0);
+  // tautan ke daftar realisasi di luar pengajuan
+  await permit.getByRole('link').click();
+  await expect(page.getByTestId('filter-tautan')).toContainText('Biaya Permit');
+  await expect(page.getByRole('row', { name: /Permit/i }).first()).toBeVisible();
+});
